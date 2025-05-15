@@ -56,6 +56,16 @@ CPUFeatures detectCPUFeatures() {
         features.avx512dq = (info[1] & (1 << 17)) != 0;
         features.avx512bw = (info[1] & (1 << 30)) != 0;
         features.avx512vl = (info[1] & (1 << 31)) != 0;
+        
+        // Check for AMX support (Advanced Matrix Extensions)
+        // AMX-TILE is bit 24 of ECX from EAX=7, ECX=0
+        features.amx_tile = (info[2] & (1 << 24)) != 0;
+        
+        // AMX-BF16 is bit 22 of EDX from EAX=7, ECX=0
+        features.amx_bf16 = (info[3] & (1 << 22)) != 0;
+        
+        // AMX-INT8 is bit 25 of EDX from EAX=7, ECX=0
+        features.amx_int8 = (info[3] & (1 << 25)) != 0;
     }
 
     return features;

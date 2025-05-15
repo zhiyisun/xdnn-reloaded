@@ -19,6 +19,10 @@ struct CPUFeatures {
     bool sse = false;        // SSE
     bool fma = false;        // FMA
     bool aesni = false;      // AES-NI
+    // Advanced Matrix Extensions (AMX)
+    bool amx_bf16 = false;   // AMX BFloat16 instructions
+    bool amx_tile = false;   // AMX Tile instructions
+    bool amx_int8 = false;   // AMX Int8 instructions
 
     // Simple check for hardware capabilities needed by specific optimizations
     bool supportsAVX512() const { return avx512f && avx512vl && avx512bw && avx512dq; }
@@ -28,6 +32,7 @@ struct CPUFeatures {
     bool supportsSSE41() const { return sse41; }
     bool supportsSSE3() const { return sse3; }
     bool supportsSSE2() const { return sse2; }
+    bool supportsAMX() const { return amx_tile && (amx_bf16 || amx_int8); }
 };
 
 // Get CPU features through CPUID instructions
