@@ -1,0 +1,12 @@
+# Build outputs
+build/
+
+# IDE files
+.vscode/
+.idea/
+
+# Compiled objects
+*.o
+*.so
+*.a
+*.out

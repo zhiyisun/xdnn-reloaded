@@ -67,3 +67,39 @@ By default, this will install to `/usr/local/`. To specify an installation prefi
 cmake -DCMAKE_INSTALL_PREFIX=/your/install/path ..
 cmake --install .
 ```
+
+## Testing
+
+A comprehensive test suite is provided to validate the library's functionality.
+
+### Running Tests
+
+1. Navigate to the tests directory:
+   ```bash
+   cd tests
+   ```
+
+2. Run the test build script:
+   ```bash
+   ./build_and_run_tests.sh
+   ```
+
+   Or manually:
+   ```bash
+   mkdir -p build
+   cd build
+   cmake ..
+   make
+   ctest --output-on-failure
+   ```
+
+### Test Coverage
+
+The test suite includes tests for:
+- SGEMM operations
+- HGEMM operations
+- BGEMM operations
+- AMX SGEMM operations
+- Softmax functionality
+- Transpose operations
+- Data type conversions and operations

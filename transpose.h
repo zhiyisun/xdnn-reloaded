@@ -3,7 +3,10 @@
 #include <immintrin.h>
 
 #include "data_types/data_types.h"
+#include "data_types/float16.h"
+#include "data_types/bfloat16.h"
 
+// Basic transpose functions for various data types
 void xdnn_transpose(const float *src, int src_rows, int src_cols, int src_stride, float *dst, int dst_stride);
 void xdnn_transpose(const XDNN_BF16 *src, int src_rows, int src_cols, int src_stride, XDNN_BF16 *dst, int dst_stride);
 void xdnn_transpose(const int *src, int src_rows, int src_cols, int src_stride, int *dst, int dst_stride);
