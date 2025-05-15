@@ -10,9 +10,18 @@ class XDNN_E4M3 {
     XDNN_E4M3() { val = 0; }
     XDNN_E4M3(float v) { (*this) = v; } // Fixed the typo here, was using val instead of v
     XDNN_E4M3(uint8_t v) { val = v; }
+    XDNN_E4M3(int v) { val = static_cast<uint8_t>(v); }
+    
+    // Cast operator for implicit conversion to int
+    operator int() const { return val; }
 
     XDNN_E4M3 &operator=(uint8_t v) {
         val = v;
+        return *this;
+    }
+
+    XDNN_E4M3 &operator=(int v) {
+        val = static_cast<uint8_t>(v);
         return *this;
     }
 

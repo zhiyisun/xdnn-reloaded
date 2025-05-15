@@ -1,3 +1,4 @@
+#include "conversion.h"
 #include "platform_detection.h"
 
 #ifdef _WIN32

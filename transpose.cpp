@@ -1,3 +1,4 @@
+#include "conversion.h"
 #include "transpose.h"
 #include "platform_detection.h"
 #include <cstring>
@@ -178,7 +179,6 @@ void transpose_avx_float(const float *src, int src_rows, int src_cols, int src_s
 } // anonymous namespace
 
 // Implementation of various transpose functions
-
 void xdnn_transpose(const float *src, int src_rows, int src_cols, int src_stride, float *dst, int dst_stride) {
     // Use the best implementation based on CPU capabilities
     xdnn::OptimizationLevel level = xdnn::getBestOptimizationLevel();
@@ -204,7 +204,7 @@ void xdnn_transpose(const int *src, int src_rows, int src_cols, int src_stride, 
     transpose_generic(src, src_rows, src_cols, src_stride, dst, dst_stride);
 }
 
-// Additional specialized transpose implementations from the header file
+// Optimized transpose functions for specific sizes
 void xdnn_transpose_16x16_v1(const int32_t *src, int src_stride, int32_t *dst, int dst_stride) {
     // 16x16 transpose implementation for int32
     // For now, use generic implementation
@@ -223,6 +223,7 @@ void xdnn_transpose_16xN_v1(const int32_t *src, int cols, int src_stride, int32_
     transpose_generic(src, 16, cols, src_stride, dst, dst_stride);
 }
 
+// Special packing transposes for BF16
 void xdnn_transpose16x32_packBA16a16b2a_v1(const XDNN_BF16 *src, int src_stride, XDNN_BF16 *dst, int dst_stride) {
     // Specialized transpose for BF16 with packing pattern
     // This needs to be implemented with proper optimizations later
@@ -250,6 +251,7 @@ void xdnn_transpose16xN_packBA16a16b2a_v1(const XDNN_BF16 *src, int src_cols, in
     }
 }
 
+// Special packing transposes for FP16
 void xdnn_transpose16x32_packBA16a16b2a_v1(const XDNN_FP16 *src, int src_stride, XDNN_FP16 *dst, int dst_stride) {
     // Specialized transpose for FP16 with packing pattern
     // This needs to be implemented with proper optimizations later

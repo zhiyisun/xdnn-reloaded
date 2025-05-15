@@ -19,6 +19,7 @@ public:
     uint8_t get_v1() const;
     uint8_t get_v2() const;
     void print() const;
+    void set(uint8_t v1, uint8_t v2);
 
 private:
     uint8_t raw_bits_;
@@ -46,6 +47,10 @@ inline XDNN_UINT4x2& XDNN_UINT4x2::operator=(const XDNN_UINT4x2& other) {
 
 inline bool XDNN_UINT4x2::operator!=(const XDNN_UINT4x2& other) const {
     return raw_bits_ != other.raw_bits_;
+}
+
+inline void XDNN_UINT4x2::set(uint8_t v1, uint8_t v2) {
+    this->raw_bits_ = (v1 & 0x0F) | ((v2 & 0x0F) << 4);
 }
 
 inline uint8_t XDNN_UINT4x2::get_v1() const {

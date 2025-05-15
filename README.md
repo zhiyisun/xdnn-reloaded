@@ -20,86 +20,88 @@ Additional utilities include:
 - Transpose operations
 - Various data type conversions (float16, bfloat16, fp8, uint4, etc.)
 
-## Building the Library
+## Building
 
-### Using CMake
+### Prerequisites
 
-1. Make sure you have CMake installed (version 3.10 or higher)
-
-2. You can build the library using the provided build script:
-   ```bash
-   ./build.sh
-   ```
-
-   Or manually:
-   ```bash
-   mkdir -p build
-   cd build
-   cmake ..
-   cmake --build .
-   ```
-
-3. This will generate both:
-   - `libxdnn.so`: Shared library
-   - `libxdnn.a`: Static library
+- CMake 3.10 or higher
+- C++17 compatible compiler (GCC or Clang recommended)
+- AVX2 and FMA instruction set support
 
 ### Build Options
 
-You can customize the build by setting CMake variables:
-- `-DCMAKE_BUILD_TYPE=Release|Debug`: Set build type (default: Release)
-- `-DBUILD_SHARED_LIBS=ON|OFF`: Control whether to build shared library (default: ON)
+The build system supports two main workflows:
 
-Example:
+1. **Building both library and tests** (default)
+2. **Building tests only** (when the library is already built)
+
+### Using the Consolidated Build Script
+
+We provide a unified script (`xdnn.sh`) that handles all build, test, and cleanup operations:
+
 ```bash
-cmake -DCMAKE_BUILD_TYPE=Debug ..
+./xdnn.sh [COMMAND] [OPTIONS]
 ```
 
-### Installation
+#### Commands:
 
-To install the libraries and headers:
+- `lib` - Build only the implementation libraries (static and shared)
+- `test` - Build and run tests using existing libraries
+- `all` - Build libraries and tests, then run tests
+- `clean` - Clean build artifacts
+- `help` - Show help message
+
+#### Options:
+
+- `--no-run` - For 'test' and 'all' commands: build tests without running them
+- `--verbose` - For 'test' and 'all' commands: show verbose test output
+- `--deep` - For 'clean' command: remove libraries in addition to build directories
+- `-j, --jobs N` - Set number of parallel build jobs (default: auto)
+
+### Common Build Scenarios
+
+#### 1. Build everything and run tests
+
 ```bash
-cd build
-cmake --install .
+./xdnn.sh all
 ```
 
-By default, this will install to `/usr/local/`. To specify an installation prefix:
+This will:
+- Build both the static and shared libraries (`libxdnn_static.a` and `libxdnn.so`)
+- Build all test executables
+- Run the tests
+
+#### 2. Build only the library
+
 ```bash
-cmake -DCMAKE_INSTALL_PREFIX=/your/install/path ..
-cmake --install .
+./xdnn.sh lib
 ```
 
-## Testing
+This will build just the libraries without building or running any tests.
 
-A comprehensive test suite is provided to validate the library's functionality.
+#### 3. Build and run tests only (assuming libraries exist)
 
-### Running Tests
+```bash
+./xdnn.sh test
+```
 
-1. Navigate to the tests directory:
-   ```bash
-   cd tests
-   ```
+This will:
+- Skip building the library
+- Build test executables
+- Run the tests
 
-2. Run the test build script:
-   ```bash
-   ./build_and_run_tests.sh
-   ```
+#### 4. Clean build artifacts
 
-   Or manually:
-   ```bash
-   mkdir -p build
-   cd build
-   cmake ..
-   make
-   ctest --output-on-failure
-   ```
+```bash
+./xdnn.sh clean
+```
 
-### Test Coverage
+This will:
+- Remove all build directories
+- Remove generated library files (if backups exist)
 
-The test suite includes tests for:
-- SGEMM operations
-- HGEMM operations
-- BGEMM operations
-- AMX SGEMM operations
-- Softmax functionality
-- Transpose operations
-- Data type conversions and operations
+For a deeper clean that removes all library files regardless of backups:
+
+```bash
+./xdnn.sh clean --deep
+```

@@ -58,13 +58,34 @@ Updated the AMX function calls with the correct parameters. Most AMX tests will 
 
 ## Building and Running Tests
 
-We provide a script to build and run tests in one command:
+We provide several options to build and run tests:
+
+### Using the Consolidated Build Script
+
+We now provide a unified script in the parent directory that handles all build operations:
 
 ```bash
-./build_and_run_tests.sh
+cd ..
+./xdnn.sh [COMMAND] [OPTIONS]
 ```
 
-Or manually:
+Common test scenarios:
+
+```bash
+# Build and run tests using existing libraries
+./xdnn.sh test
+
+# Build both libraries and tests, then run tests
+./xdnn.sh all
+
+# Build tests without running them
+./xdnn.sh test --no-run
+
+# Run tests with verbose output
+./xdnn.sh test --verbose
+```
+
+### Manual build process
 
 1. Create a build directory and navigate to it:
    ```bash
