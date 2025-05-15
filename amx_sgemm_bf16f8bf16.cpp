@@ -24,69 +24,38 @@ inline float _xdnn_fp8_to_float(const XDNN_E4M3& fp8) {
 
 // Pack size calculation for AMX-optimized operations
 int xdnn_small_amx_sgemm_bf16f8bf16_packb_size(int N, int K, int pack_size) {
-    // Calculate the number of blocks needed
-    const int n_blocks = (N + pack_size - 1) / pack_size;
-    const int k_blocks = (K + pack_size - 1) / pack_size;
-    
-    // Calculate total size with proper alignment
+    int n_blocks = (N + pack_size - 1) / pack_size;
+    int k_blocks = (K + pack_size - 1) / pack_size;
     return n_blocks * k_blocks * pack_size * pack_size * sizeof(XDNN_E4M3);
 }
 
 // Pack matrix B for efficient AMX execution
 void xdnn_small_amx_sgemm_bf16f8bf16_packb(
         bool transB, int N, int K, const XDNN_E4M3 *B, int ldb, XDNN_E4M3 *packedB, int pack_size) {
-    // Implementation depends on whether B is transposed
-    if (transB) {
-        // Handle transposed input matrix
-        for (int k = 0; k < K; k += pack_size) {
-            for (int n = 0; n < N; n += pack_size) {
-                const int k_block = std::min(pack_size, K - k);
-                const int n_block = std::min(pack_size, N - n);
-                
-                // Pack the data in tiles for AMX operations
-                for (int kb = 0; kb < k_block; kb++) {
-                    for (int nb = 0; nb < n_block; nb++) {
-                        packedB[(k/pack_size * N + n) * pack_size * pack_size + kb * pack_size + nb] = 
+    int n_blocks = (N + pack_size - 1) / pack_size;
+    int k_blocks = (K + pack_size - 1) / pack_size;
+    for (int k = 0; k < K; k += pack_size) {
+        for (int n = 0; n < N; n += pack_size) {
+            int k_block = std::min(pack_size, K - k);
+            int n_block = std::min(pack_size, N - n);
+            int block_idx = (k / pack_size) * n_blocks + (n / pack_size);
+            for (int kb = 0; kb < k_block; kb++) {
+                for (int nb = 0; nb < n_block; nb++) {
+                    if (transB) {
+                        packedB[block_idx * pack_size * pack_size + kb * pack_size + nb] =
                             B[(n + nb) * ldb + (k + kb)];
-                    }
-                    // Zero padding
-                    for (int nb = n_block; nb < pack_size; nb++) {
-                        packedB[(k/pack_size * N + n) * pack_size * pack_size + kb * pack_size + nb] = 0;
-                    }
-                }
-                
-                // Zero padding
-                for (int kb = k_block; kb < pack_size; kb++) {
-                    for (int nb = 0; nb < pack_size; nb++) {
-                        packedB[(k/pack_size * N + n) * pack_size * pack_size + kb * pack_size + nb] = 0;
-                    }
-                }
-            }
-        }
-    } else {
-        // Handle non-transposed input matrix
-        for (int k = 0; k < K; k += pack_size) {
-            for (int n = 0; n < N; n += pack_size) {
-                const int k_block = std::min(pack_size, K - k);
-                const int n_block = std::min(pack_size, N - n);
-                
-                // Pack the data in tiles for AMX operations
-                for (int kb = 0; kb < k_block; kb++) {
-                    for (int nb = 0; nb < n_block; nb++) {
-                        packedB[(k/pack_size * N + n) * pack_size * pack_size + kb * pack_size + nb] = 
+                    } else {
+                        packedB[block_idx * pack_size * pack_size + kb * pack_size + nb] =
                             B[(k + kb) * ldb + (n + nb)];
                     }
-                    // Zero padding
-                    for (int nb = n_block; nb < pack_size; nb++) {
-                        packedB[(k/pack_size * N + n) * pack_size * pack_size + kb * pack_size + nb] = 0;
-                    }
                 }
-                
-                // Zero padding
-                for (int kb = k_block; kb < pack_size; kb++) {
-                    for (int nb = 0; nb < pack_size; nb++) {
-                        packedB[(k/pack_size * N + n) * pack_size * pack_size + kb * pack_size + nb] = 0;
-                    }
+                for (int nb = n_block; nb < pack_size; nb++) {
+                    packedB[block_idx * pack_size * pack_size + kb * pack_size + nb] = 0;
+                }
+            }
+            for (int kb = k_block; kb < pack_size; kb++) {
+                for (int nb = 0; nb < pack_size; nb++) {
+                    packedB[block_idx * pack_size * pack_size + kb * pack_size + nb] = 0;
                 }
             }
         }
@@ -97,12 +66,12 @@ void xdnn_small_amx_sgemm_bf16f8bf16_packb(
 void xdnn_small_amx_sgemm_bf16f8bf16_compute_single(int M, int N, int K, const XDNN_BF16 *A, int lda,
         const XDNN_E4M3 *packedB, XDNN_BF16 *C, int ldc, const float *scaleB, int lds, int blockSize, float alpha,
         float beta, const float *bias) {
-    
-    // AMX tile parameters
     const int AMX_TILE_M = 16;
     const int AMX_TILE_N = 16;
     const int AMX_TILE_K = 32;
-    
+    int n_blocks = (N + AMX_TILE_N - 1) / AMX_TILE_N;
+    int k_blocks = (K + AMX_TILE_K - 1) / AMX_TILE_K;
+
     // Handle scaling of existing C matrix based on beta
     if (beta == 0.0f) {
         for (int m = 0; m < M; m++) {
@@ -115,7 +84,7 @@ void xdnn_small_amx_sgemm_bf16f8bf16_compute_single(int M, int N, int K, const X
             }
         }
     }
-    
+
     // Add bias if provided
     if (bias != nullptr) {
         for (int m = 0; m < M; m++) {
@@ -125,35 +94,24 @@ void xdnn_small_amx_sgemm_bf16f8bf16_compute_single(int M, int N, int K, const X
             }
         }
     }
-    
+
     // Main computation loop
     for (int m = 0; m < M; m += AMX_TILE_M) {
         int mb = std::min(AMX_TILE_M, M - m);
-        
         for (int n = 0; n < N; n += AMX_TILE_N) {
             int nb = std::min(AMX_TILE_N, N - n);
-            
-            // Get scale factor for this block
             float scale = scaleB[(n / blockSize) * lds];
-            
             for (int k = 0; k < K; k += AMX_TILE_K) {
                 int kb = std::min(AMX_TILE_K, K - k);
-                
-                // AMX tile multiplication
+                int block_idx = (k / AMX_TILE_K) * n_blocks + (n / AMX_TILE_N);
                 for (int i = 0; i < mb; i++) {
                     for (int j = 0; j < nb; j++) {
                         float accum = 0.0f;
-                        
-                        // Inner loop for matrix multiplication
                         for (int kk = 0; kk < kb; kk++) {
                             float a_val = _xdnn_to_float(A[(m + i) * lda + (k + kk)]);
-                            float b_val = _xdnn_fp8_to_float(packedB[(k/AMX_TILE_K * N + n) * 
-                                AMX_TILE_K * AMX_TILE_N + kk * AMX_TILE_N + j]);
-                            
+                            float b_val = _xdnn_fp8_to_float(packedB[block_idx * AMX_TILE_K * AMX_TILE_N + kk * AMX_TILE_N + j]);
                             accum += a_val * b_val * scale;
                         }
-                        
-                        // Update output with scaled accumulator
                         float c_val = _xdnn_to_float(C[(m + i) * ldc + (n + j)]);
                         C[(m + i) * ldc + (n + j)] = _xdnn_to_bf16(c_val + alpha * accum);
                     }
@@ -216,6 +174,8 @@ void xdnn_small_amx_sgemm_bf16f8bf16_compute(int M, int N, int K, const XDNN_BF1
             const int AMX_TILE_M = 16;
             const int AMX_TILE_N = 16;
             const int AMX_TILE_K = 32;
+            int n_blocks = (N + AMX_TILE_N - 1) / AMX_TILE_N;
+            int k_blocks = (K + AMX_TILE_K - 1) / AMX_TILE_K;
             
             for (int m = start_row; m < end_row; m += AMX_TILE_M) {
                 int mb = std::min(AMX_TILE_M, end_row - m);
@@ -228,6 +188,7 @@ void xdnn_small_amx_sgemm_bf16f8bf16_compute(int M, int N, int K, const XDNN_BF1
                     
                     for (int k = 0; k < K; k += AMX_TILE_K) {
                         int kb = std::min(AMX_TILE_K, K - k);
+                        int block_idx = (k / AMX_TILE_K) * n_blocks + (n / AMX_TILE_N);
                         
                         // AMX tile multiplication
                         for (int i = 0; i < mb; i++) {
@@ -237,8 +198,7 @@ void xdnn_small_amx_sgemm_bf16f8bf16_compute(int M, int N, int K, const XDNN_BF1
                                 // Inner loop for matrix multiplication
                                 for (int kk = 0; kk < kb; kk++) {
                                     float a_val = _xdnn_to_float(A[(m + i) * lda + (k + kk)]);
-                                    float b_val = _xdnn_fp8_to_float(packedB[(k/AMX_TILE_K * N + n) * 
-                                        AMX_TILE_K * AMX_TILE_N + kk * AMX_TILE_N + j]);
+                                    float b_val = _xdnn_fp8_to_float(packedB[block_idx * AMX_TILE_K * AMX_TILE_N + kk * AMX_TILE_N + j]);
                                     
                                     accum += a_val * b_val * scale;
                                 }

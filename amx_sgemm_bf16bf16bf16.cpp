@@ -15,69 +15,68 @@
 
 // AMX packing function for bfloat16 matrices
 int xdnn_small_amx_sgemm_bf16bf16bf16_packb_size(int N, int K, int block_rows, int block_cols) {
-    // Calculate required size for packing including alignment padding
-    // Each block is stored contiguously for better memory access patterns
-    int num_blocks = (N + block_cols - 1) / block_cols * (K + block_rows - 1) / block_rows;
-    return num_blocks * block_rows * block_cols * sizeof(XDNN_BF16);
+    int n_blocks = (N + block_cols - 1) / block_cols;
+    int k_blocks = (K + block_rows - 1) / block_rows;
+    return n_blocks * k_blocks * block_rows * block_cols * sizeof(XDNN_BF16);
 }
 
 void xdnn_small_amx_sgemm_bf16bf16bf16_packb(
         bool transB, int N, int K, const XDNN_BF16 *B, int stride, XDNN_BF16 *packedB, int size) {
-    // AMX optimized packing function for BF16 matrices
-    // Pack matrix B for efficient blocked computation leveraging AMX instructions
-    
-    // Define tile size for AMX operations
-    const int amx_tile_rows = 16;
-    const int amx_tile_cols = 16;
+    const int TILE_K = 16;
+    const int TILE_N = 16;
+    int n_blocks = (N + TILE_N - 1) / TILE_N;
+    int k_blocks = (K + TILE_K - 1) / TILE_K;
     
     if (transB) {
-        // Handle transposed input - extract in column-major format and store in blocks
-        for (int k = 0; k < K; k += amx_tile_rows) {
-            for (int n = 0; n < N; n += amx_tile_cols) {
-                const int k_block = std::min(amx_tile_rows, K - k);
-                const int n_block = std::min(amx_tile_cols, N - n);
+        for (int k = 0; k < K; k += TILE_K) {
+            int k_block = std::min(TILE_K, K - k);
+            for (int n = 0; n < N; n += TILE_N) {
+                int n_block = std::min(TILE_N, N - n);
+                // Indexing: blocks in K-major order
+                int block_idx = (k / TILE_K) * n_blocks + (n / TILE_N);
                 
                 for (int kb = 0; kb < k_block; kb++) {
                     for (int nb = 0; nb < n_block; nb++) {
-                        packedB[(k * N + n * amx_tile_rows + kb * amx_tile_cols + nb)] = 
-                            B[(n + nb) * stride + (k + kb)];
+                        // Packing in K-major order within blocks
+                        int packed_idx = block_idx * TILE_K * TILE_N + kb * TILE_N + nb;
+                        packedB[packed_idx] = B[(k + kb) + (n + nb) * stride]; // transposed, so (n,k) -> (k,n)
                     }
-                    // Pad to full tile width if needed
-                    for (int nb = n_block; nb < amx_tile_cols; nb++) {
-                        packedB[(k * N + n * amx_tile_rows + kb * amx_tile_cols + nb)] = 0;
+                    // Zero-pad if needed
+                    for (int nb = n_block; nb < TILE_N; nb++) {
+                        packedB[block_idx * TILE_K * TILE_N + kb * TILE_N + nb] = XDNN_BF16(0.0f);
                     }
                 }
-                
-                // Pad to full tile height if needed
-                for (int kb = k_block; kb < amx_tile_rows; kb++) {
-                    for (int nb = 0; nb < amx_tile_cols; nb++) {
-                        packedB[(k * N + n * amx_tile_rows + kb * amx_tile_cols + nb)] = 0;
+                // Zero-pad for remaining k values in the block
+                for (int kb = k_block; kb < TILE_K; kb++) {
+                    for (int nb = 0; nb < TILE_N; nb++) {
+                        packedB[block_idx * TILE_K * TILE_N + kb * TILE_N + nb] = XDNN_BF16(0.0f);
                     }
                 }
             }
         }
     } else {
-        // Handle non-transposed input - extract in row-major format and store in blocks
-        for (int k = 0; k < K; k += amx_tile_rows) {
-            for (int n = 0; n < N; n += amx_tile_cols) {
-                const int k_block = std::min(amx_tile_rows, K - k);
-                const int n_block = std::min(amx_tile_cols, N - n);
+        for (int k = 0; k < K; k += TILE_K) {
+            int k_block = std::min(TILE_K, K - k);
+            for (int n = 0; n < N; n += TILE_N) {
+                int n_block = std::min(TILE_N, N - n);
+                // Indexing: blocks in K-major order
+                int block_idx = (k / TILE_K) * n_blocks + (n / TILE_N);
                 
                 for (int kb = 0; kb < k_block; kb++) {
                     for (int nb = 0; nb < n_block; nb++) {
-                        packedB[(k * N + n * amx_tile_rows + kb * amx_tile_cols + nb)] = 
-                            B[(k + kb) * stride + (n + nb)];
+                        // Packing in K-major order within blocks
+                        int packed_idx = block_idx * TILE_K * TILE_N + kb * TILE_N + nb;
+                        packedB[packed_idx] = B[(k + kb) * stride + (n + nb)];
                     }
-                    // Pad to full tile width if needed
-                    for (int nb = n_block; nb < amx_tile_cols; nb++) {
-                        packedB[(k * N + n * amx_tile_rows + kb * amx_tile_cols + nb)] = 0;
+                    // Zero-pad if needed
+                    for (int nb = n_block; nb < TILE_N; nb++) {
+                        packedB[block_idx * TILE_K * TILE_N + kb * TILE_N + nb] = XDNN_BF16(0.0f);
                     }
                 }
-                
-                // Pad to full tile height if needed
-                for (int kb = k_block; kb < amx_tile_rows; kb++) {
-                    for (int nb = 0; nb < amx_tile_cols; nb++) {
-                        packedB[(k * N + n * amx_tile_rows + kb * amx_tile_cols + nb)] = 0;
+                // Zero-pad for remaining k values in the block
+                for (int kb = k_block; kb < TILE_K; kb++) {
+                    for (int nb = 0; nb < TILE_N; nb++) {
+                        packedB[block_idx * TILE_K * TILE_N + kb * TILE_N + nb] = XDNN_BF16(0.0f);
                     }
                 }
             }
@@ -102,14 +101,11 @@ void xdnn_small_amx_sgemm_bf16bf16f32_compute(int M, int N, int K, const XDNN_BF
 // BA16a64b2a AMX specialized implementation for BF16 input/output
 void xdnn_small_amx_sgemm_bf16bf16bf16_compute_BA16a64b2a(int M, int N, int K, const XDNN_BF16 *A,
         int lda, const XDNN_BF16 *packedB, XDNN_BF16 *C, int ldc, float alpha, float beta) {
-    // Implementation will use AMX tiles for optimized computation
-    // AMX tile configuration for BF16 computation
-    const int TILE_M = 16;  // AMX tile rows
-    const int TILE_N = 16;  // AMX tile columns
-    const int TILE_K = 32;  // AMX accumulation depth
-    
-    // Initialize AMX for computation
-    // Note: AMX instructions require specific CPU support and initialization
+    const int TILE_M = 16;
+    const int TILE_N = 16;
+    const int TILE_K = 16;  // Changed to match packing function
+    int n_blocks = (N + TILE_N - 1) / TILE_N;
+    int k_blocks = (K + TILE_K - 1) / TILE_K;
 
     // Scale or zero output matrix based on beta value
     if (beta == 0.0f) {
@@ -127,28 +123,26 @@ void xdnn_small_amx_sgemm_bf16bf16bf16_compute_BA16a64b2a(int M, int N, int K, c
     // Main computation loop
     for (int m = 0; m < M; m += TILE_M) {
         int mb = std::min(TILE_M, M - m);
-        
         for (int n = 0; n < N; n += TILE_N) {
             int nb = std::min(TILE_N, N - n);
-            
-            // Initialize accumulation
-            __m512 acc[TILE_M/16][TILE_N/16] = {0};
-            
-            for (int k = 0; k < K; k += TILE_K) {
-                int kb = std::min(TILE_K, K - k);
-                
-                // AMX tile-based matrix multiplication
-                // This would use actual AMX instructions in a real implementation
-                for (int i = 0; i < mb; i++) {
-                    for (int j = 0; j < nb; j++) {
-                        float sum = 0.0f;
+            for (int i = 0; i < mb; i++) {
+                for (int j = 0; j < nb; j++) {
+                    float sum = 0.0f;
+                    for (int k = 0; k < K; k += TILE_K) {
+                        int kb = std::min(TILE_K, K - k);
+                        // Update block index calculation to match packing function
+                        int block_idx = (k / TILE_K) * n_blocks + (n / TILE_N);
                         for (int kk = 0; kk < kb; kk++) {
-                            sum += _xdnn_to_float(A[(m + i) * lda + k + kk]) * 
-                                   _xdnn_to_float(packedB[(k * N + n * TILE_K + kk * TILE_N + j)]);
+                            // Update in-block indexing to match packing function
+                            int packedB_idx = block_idx * TILE_K * TILE_N + kk * TILE_N + j;
+                            float a_val = _xdnn_to_float(A[(m + i) * lda + (k + kk)]);
+                            float b_val = _xdnn_to_float(packedB[packedB_idx]);
+                            sum += a_val * b_val;
                         }
-                        C[(m + i) * ldc + n + j] = _xdnn_to_bf16(alpha * sum + 
-                            _xdnn_to_float(C[(m + i) * ldc + n + j]));
                     }
+                    float c_val = _xdnn_to_float(C[(m + i) * ldc + n + j]);
+                    float new_val = alpha * sum + (beta != 0.0f ? c_val : 0.0f);
+                    C[(m + i) * ldc + n + j] = _xdnn_to_bf16(new_val);
                 }
             }
         }
