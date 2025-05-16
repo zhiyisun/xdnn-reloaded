@@ -395,3 +395,115 @@ void xdnn_sgemm_f32nf4f32_compute_biasadd(bool transA, int M, int N, int K,
         }
     }
 }
+
+// Compute SGEMM with bias addition and ReLU activation
+void xdnn_sgemm_f32nf4f32_compute_biasadd_relu(bool transA, int M, int N, int K,
+                                         float alpha, const float *A, int lda, const XDNN_NF4x2 *packedB, const float *scaleB, const float *zeroB,
+                                         float beta, float *C, int ldc, const float *bias) {
+    // Compute regular SGEMM with bias
+    xdnn_sgemm_f32nf4f32_compute_biasadd(transA, M, N, K, alpha, A, lda, packedB, scaleB, zeroB, beta, C, ldc, bias);
+    
+    // Apply ReLU activation
+    for (int i = 0; i < M; i++) {
+        for (int j = 0; j < N; j++) {
+            C[i * ldc + j] = std::max(0.0f, C[i * ldc + j]);
+        }
+    }
+}
+
+// Compute SGEMM with bias and residential addition
+void xdnn_sgemm_f32nf4f32_compute_residential(bool transA, int M, int N, int K,
+                                           float alpha, const float *A, int lda, const XDNN_NF4x2 *packedB, const float *scaleB, const float *zeroB,
+                                           float beta, float *C, int ldc, const float *bias, const float *res, int ldres) {
+    // Compute regular SGEMM
+    xdnn_sgemm_f32nf4f32_compute(transA, M, N, K, alpha, A, lda, packedB, scaleB, zeroB, beta, C, ldc);
+    
+    // Add bias and residual connection
+    for (int i = 0; i < M; i++) {
+        for (int j = 0; j < N; j++) {
+            C[i * ldc + j] += bias[j] + res[i * ldres + j];
+        }
+    }
+}
+
+// Compute SGEMM with bias and scaled residential addition
+void xdnn_sgemm_f32nf4f32_compute_resext(bool transA, int M, int N, int K,
+                                      float alpha, const float *A, int lda, const XDNN_NF4x2 *packedB, const float *scaleB, const float *zeroB,
+                                      float beta, float *C, int ldc, const float *bias, 
+                                      float gamma, const float *res, int ldres) {
+    // Compute regular SGEMM
+    xdnn_sgemm_f32nf4f32_compute(transA, M, N, K, alpha, A, lda, packedB, scaleB, zeroB, beta, C, ldc);
+    
+    // Add bias and scaled residual connection
+    for (int i = 0; i < M; i++) {
+        for (int j = 0; j < N; j++) {
+            C[i * ldc + j] += bias[j] + gamma * res[i * ldres + j];
+        }
+    }
+}
+
+// Compute SGEMM with element-wise multiplication of residual
+void xdnn_sgemm_f32nf4f32_compute_resmul(bool transA, int M, int N, int K,
+                                      float alpha, const float *A, int lda, const XDNN_NF4x2 *packedB, const float *scaleB, const float *zeroB,
+                                      float beta, float *C, int ldc, const float *res, int ldres) {
+    // Compute regular SGEMM
+    xdnn_sgemm_f32nf4f32_compute(transA, M, N, K, alpha, A, lda, packedB, scaleB, zeroB, beta, C, ldc);
+    
+    // Perform element-wise multiplication with residual connection
+    for (int i = 0; i < M; i++) {
+        for (int j = 0; j < N; j++) {
+            C[i * ldc + j] *= res[i * ldres + j];
+        }
+    }
+}
+
+// Single-threaded optimized implementation for small matrices
+void small_sgemm_f32nf4f32(int M, int N, int K, const float *A, int lda,
+                         const XDNN_NF4x2 *B, int ldb, const float *scaleB, const float *zeroB, 
+                         float *C, int ldc) {
+    // Single-threaded optimized implementation for small matrix sizes
+    // This is useful for situations where the overhead of threading would be too high
+    
+    int packed_K = (K + 1) / 2;  // Since each NF4x2 contains two values
+    
+    // Simple blocking for better cache usage
+    constexpr int BLOCK_SIZE_M = 4;
+    constexpr int BLOCK_SIZE_N = 16;
+    constexpr int BLOCK_SIZE_K = 8;
+    
+    for (int i0 = 0; i0 < M; i0 += BLOCK_SIZE_M) {
+        int i_end = std::min(i0 + BLOCK_SIZE_M, M);
+        
+        for (int j0 = 0; j0 < N; j0 += BLOCK_SIZE_N) {
+            int j_end = std::min(j0 + BLOCK_SIZE_N, N);
+            
+            for (int i = i0; i < i_end; i++) {
+                for (int j = j0; j < j_end; j++) {
+                    float sum = 0.0f;
+                    
+                    for (int kk = 0; kk < packed_K; kk += BLOCK_SIZE_K) {
+                        int k_end = std::min(kk + BLOCK_SIZE_K, packed_K);
+                        
+                        for (int k = kk; k < k_end; k++) {
+                            float val1, val2;
+                            nf4x2_to_fp32(B[k * ldb + j], val1, val2);
+                            
+                            // Dequantize
+                            val1 = val1 * scaleB[j] + zeroB[j];
+                            val2 = val2 * scaleB[j] + zeroB[j];
+                            
+                            // Multiply and accumulate, handling odd K
+                            int original_k = k * 2;
+                            sum += A[i * lda + original_k] * val1;
+                            if (original_k + 1 < K) {
+                                sum += A[i * lda + original_k + 1] * val2;
+                            }
+                        }
+                    }
+                    
+                    C[i * ldc + j] = sum;
+                }
+            }
+        }
+    }
+}
