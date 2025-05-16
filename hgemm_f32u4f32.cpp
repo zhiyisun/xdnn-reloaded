@@ -7,6 +7,8 @@
 #include <cmath>
 #include <cfloat>
 #include <limits>
+#include <cassert>
+#include <iostream>
 
 // Constants for block sizes to optimize cache usage
 #define HGEMM_MC 64
@@ -51,7 +53,7 @@ inline void u4x2_to_float(const XDNN_UINT4x2& u4x2, float scale1, float scale2,
 // Quantize a matrix from float to UINT4x2
 void xdnn_hgemm_f32u4f32_quantize(bool transB, int N, int K, const float *B, int ldb,
         float quantization_rate, XDNN_UINT4x2 *quantizedB, int ldqb, float *scaleB, float *zeroB) {
-    
+
     // Process column by column (or row by row if transposed)
     if (transB) {
         // B is in N x K format
@@ -140,10 +142,18 @@ void xdnn_hgemm_f32u4f32_quantize(bool transB, int N, int K, const float *B, int
 void xdnn_hgemm_f32u4f32(bool transA, bool transB, int M, int N, int K,
         float alpha, const float *A, int lda, const XDNN_UINT4x2 *quantizedB, int ldb, const float *scaleB, const float *zeroB,
         float beta, float *C, int ldc) {
-    
-    // Use direct computation without packing to avoid memory issues in tests
-    // This simpler approach is safer and ensures consistency in tests
-    
+
+    // Validate pointers
+    if (quantizedB == nullptr || scaleB == nullptr || zeroB == nullptr || C == nullptr) {
+        std::cerr << "Error: One or more input pointers are null in xdnn_hgemm_f32u4f32." << std::endl;
+        return;
+    }
+
+    // Validate dimensions and parameters
+    assert(M > 0 && N > 0 && K > 0);
+    assert(lda >= K && ldc >= N);
+    assert(quantizedB != nullptr && scaleB != nullptr && zeroB != nullptr && C != nullptr);
+
     // Scale C matrix by beta if needed
     if (beta == 0.0f) {
         for (int i = 0; i < M; i++) {
@@ -156,59 +166,51 @@ void xdnn_hgemm_f32u4f32(bool transA, bool transB, int M, int N, int K,
             }
         }
     }
-    
+
     // Direct implementation that doesn't use packed B
     for (int m = 0; m < M; m++) {
         for (int n = 0; n < N; n++) {
             float sum = 0.0f;
-            
+
             // Get scale and zero point for this column
-            float scale = scaleB[n];
-            float zero = zeroB[n];
-            
+            float current_col_scale = scaleB[n];
+            float current_col_zero = zeroB[n];
+
             // Process pairs of elements since each UINT4x2 contains 2 values
-            for (int k = 0; k < K / 2; k++) {
-                // Calculate the index for B based on layout
-                int b_idx;
+            for (int k_pair_idx = 0; k_pair_idx < (K + 1) / 2; k_pair_idx++) {
+                int k_actual_idx1 = k_pair_idx * 2;
+                int k_actual_idx2 = k_pair_idx * 2 + 1;
+
+                // Ensure indices are within bounds
+                if (k_actual_idx1 >= K) continue;
+
+                XDNN_UINT4x2 b_quant_pair_val;
                 if (transB) {
-                    b_idx = n * ldb + k;
+                    // Access quantizedB[row=n][col=k_pair_idx]
+                    b_quant_pair_val = quantizedB[n * ldb + k_pair_idx];
                 } else {
-                    b_idx = k * ldb + n / 2;
+                    // Access quantizedB[row=k_pair_idx][col=n]
+                    b_quant_pair_val = quantizedB[k_pair_idx * ldb + n];
                 }
-                
-                // Get the two values from the UINT4x2
-                uint8_t val1, val2;
-                if (n % 2 == 0) {
-                    // Even column uses the first 4-bit value
-                    val1 = quantizedB[b_idx].get_v1();
-                    val2 = quantizedB[b_idx].get_v2();
-                } else {
-                    // Odd column uses the second 4-bit value
-                    val1 = quantizedB[b_idx].get_v2();
-                    val2 = quantizedB[b_idx + ldb].get_v1();
-                }
-                
+
+                uint8_t val_u4_1 = b_quant_pair_val.get_v1();
+                uint8_t val_u4_2 = b_quant_pair_val.get_v2();
+
                 // Dequantize
-                float b_val1 = val1 * scale + zero;
-                float b_val2 = val2 * scale + zero;
-                
+                float b_val1 = val_u4_1 * current_col_scale + current_col_zero;
+                float b_val2 = val_u4_2 * current_col_scale + current_col_zero;
+
                 // Get values from A based on layout
-                float a_val1, a_val2;
-                if (transA) {
-                    a_val1 = A[k * 2 * lda + m];
-                    a_val2 = (k * 2 + 1 < K) ? A[(k * 2 + 1) * lda + m] : 0;
-                } else {
-                    a_val1 = A[m * lda + k * 2];
-                    a_val2 = (k * 2 + 1 < K) ? A[m * lda + k * 2 + 1] : 0;
-                }
-                
+                float a_val1 = transA ? A[k_actual_idx1 * lda + m] : A[m * lda + k_actual_idx1];
+                float a_val2 = (k_actual_idx2 < K) ? (transA ? A[k_actual_idx2 * lda + m] : A[m * lda + k_actual_idx2]) : 0.0f;
+
                 // Accumulate the product
                 sum += a_val1 * b_val1;
-                if (k * 2 + 1 < K) {
+                if (k_actual_idx2 < K) {
                     sum += a_val2 * b_val2;
                 }
             }
-            
+
             // Update C with the result
             C[m * ldc + n] += alpha * sum;
         }
@@ -217,6 +219,13 @@ void xdnn_hgemm_f32u4f32(bool transA, bool transB, int M, int N, int K,
 
 // Pack matrix B for efficient computation
 void xdnn_hgemm_f32u4f32_packb(bool transB, int N, int K, const XDNN_UINT4x2 *quantizedB, int ldb, XDNN_UINT4x2 *packedB) {
+
+    // Validate pointers
+    if (quantizedB == nullptr || packedB == nullptr) {
+        std::cerr << "Error: Null pointer detected in xdnn_hgemm_f32u4f32_packb." << std::endl;
+        return;
+    }
+
     // Calculate sizes for packing - note K/2 because each UINT4x2 holds 2 values
     int kb = (K/2 + HGEMM_KC - 1) / HGEMM_KC;
     int nb = (N + HGEMM_NR - 1) / HGEMM_NR;
@@ -231,13 +240,19 @@ void xdnn_hgemm_f32u4f32_packb(bool transB, int N, int K, const XDNN_UINT4x2 *qu
             
             for (int n_block = 0; n_block < N; n_block += HGEMM_NR) {
                 int n_size = std::min(HGEMM_NR, N - n_block);
-                
+
                 // Calculate offset in the packed buffer
                 int offset = (k_block / HGEMM_KC) * nb * HGEMM_KC * HGEMM_NR + 
                              (n_block / HGEMM_NR) * HGEMM_KC * HGEMM_NR;
-                
+
                 for (int k = 0; k < k_size; k++) {
                     for (int n = 0; n < n_size; n++) {
+                        // Ensure offset is within bounds
+                        if (offset + k * HGEMM_NR + n >= nb * kb * HGEMM_KC * HGEMM_NR) {
+                            std::cerr << "Error: Out-of-bounds write detected in xdnn_hgemm_f32u4f32_packb." << std::endl;
+                            return;
+                        }
+
                         packedB[offset + k * HGEMM_NR + n] = quantizedB[(n_block + n) * ldb + (k_block + k)];
                     }
                 }
@@ -250,13 +265,19 @@ void xdnn_hgemm_f32u4f32_packb(bool transB, int N, int K, const XDNN_UINT4x2 *qu
             
             for (int n_block = 0; n_block < N; n_block += HGEMM_NR) {
                 int n_size = std::min(HGEMM_NR, N - n_block);
-                
+
                 // Calculate offset in the packed buffer
                 int offset = (k_block / HGEMM_KC) * nb * HGEMM_KC * HGEMM_NR + 
                              (n_block / HGEMM_NR) * HGEMM_KC * HGEMM_NR;
-                
+
                 for (int k = 0; k < k_size; k++) {
                     for (int n = 0; n < n_size; n++) {
+                        // Ensure offset is within bounds
+                        if (offset + k * HGEMM_NR + n >= nb * kb * HGEMM_KC * HGEMM_NR) {
+                            std::cerr << "Error: Out-of-bounds write detected in xdnn_hgemm_f32u4f32_packb." << std::endl;
+                            return;
+                        }
+
                         packedB[offset + k * HGEMM_NR + n] = quantizedB[(k_block + k) * ldb + (n_block + n)];
                     }
                 }
@@ -269,6 +290,12 @@ void xdnn_hgemm_f32u4f32_packb(bool transB, int N, int K, const XDNN_UINT4x2 *qu
 void xdnn_hgemm_f32u4f32_compute(bool transA, int M, int N, int K,
         float alpha, const float *A, int lda, const XDNN_UINT4x2 *packedB, const float *scaleB, const float *zeroB,
         float beta, float *C, int ldc, int groupsize) {
+    
+    // Validate pointers
+    if (A == nullptr || packedB == nullptr || scaleB == nullptr || zeroB == nullptr || C == nullptr) {
+        std::cerr << "Error: Null pointer detected in xdnn_hgemm_f32u4f32_compute." << std::endl;
+        return;
+    }
     
     // Scale C matrix by beta if needed
     if (beta == 0.0f) {

@@ -56,35 +56,42 @@ void xdnn_hgemm_f32f16f32_packb(bool transB, int N, int K, const XDNN_FP16 *B, i
 void xdnn_hgemm_f32f16f32_packb_block(bool transB, int N, int K, const XDNN_FP16 *B, int ldb, 
                                      XDNN_FP16 *packedB, int block_rows, int block_cols) {
     // Pack matrix B into block format for better cache usage during computation
-    int nb = (N + block_cols - 1) / block_cols;
-    int kb = (K + block_rows - 1) / block_rows;
-    
+    // The packing order is K-major blocks, then N-major blocks.
+    // Within each (K_block, N_block) tile, the data is stored K-minor (row) major.
+    int num_k_blocks = (K + block_rows - 1) / block_rows;
+    int nb = (N + block_cols - 1) / block_cols; // Number of blocks in N dimension
+
     // Zero initialize the entire packed buffer
-    memset(packedB, 0, nb * kb * block_rows * block_cols * sizeof(XDNN_FP16));
-    
-    for (int k_block = 0; k_block < K; k_block += block_rows) {
-        int k_size = std::min(block_rows, K - k_block);
-        
-        for (int n_block = 0; n_block < N; n_block += block_cols) {
-            int n_size = std::min(block_cols, N - n_block);
-            
-            // Calculate offset in the packed buffer
-            int offset = (k_block / block_rows) * nb * block_rows * block_cols + 
-                         (n_block / block_cols) * block_rows * block_cols;
-            
-            if (transB) {
-                // B is in N x K format
-                for (int k = 0; k < k_size; k++) {
-                    for (int n = 0; n < n_size; n++) {
-                        packedB[offset + k * block_cols + n] = B[(n_block + n) * ldb + (k_block + k)];
+    // The size of packedB should be num_k_blocks * nb * block_rows * block_cols
+    memset(packedB, 0, num_k_blocks * nb * block_rows * block_cols * sizeof(XDNN_FP16));
+
+    for (int k_block_idx = 0; k_block_idx < num_k_blocks; ++k_block_idx) {
+        int k_start = k_block_idx * block_rows;
+        int k_end = std::min(k_start + block_rows, K);
+
+        for (int n_block_idx = 0; n_block_idx < nb; ++n_block_idx) {
+            int n_start = n_block_idx * block_cols;
+            int n_end = std::min(n_start + block_cols, N);
+
+            // Calculate base offset for the current (K_block, N_block) tile in packedB
+            XDNN_FP16* packedB_tile_ptr = packedB + (k_block_idx * nb + n_block_idx) * block_rows * block_cols;
+
+            for (int k_local = 0; k_local < (k_end - k_start); ++k_local) {
+                for (int n_local = 0; n_local < (n_end - n_start); ++n_local) {
+                    int global_k = k_start + k_local;
+                    int global_n = n_start + n_local;
+                    XDNN_FP16 val;
+                    if (transB) {
+                        // Original B is N x K (col-major from C++ perspective if ldb=N, or row-major if ldb=K)
+                        // Access B[global_n, global_k]
+                        val = B[global_n * ldb + global_k];
+                    } else {
+                        // Original B is K x N (row-major from C++ perspective if ldb=N)
+                        // Access B[global_k, global_n]
+                        val = B[global_k * ldb + global_n];
                     }
-                }
-            } else {
-                // B is in K x N format
-                for (int k = 0; k < k_size; k++) {
-                    for (int n = 0; n < n_size; n++) {
-                        packedB[offset + k * block_cols + n] = B[(k_block + k) * ldb + (n_block + n)];
-                    }
+                    // Store in K-minor (row) major within the tile
+                    packedB_tile_ptr[k_local * block_cols + n_local] = val;
                 }
             }
         }
@@ -95,9 +102,6 @@ void xdnn_hgemm_f32f16f32_packb_block(bool transB, int N, int K, const XDNN_FP16
 void xdnn_hgemm_f32f16f32_compute(bool transA, int M, int N, int K,
         float alpha, const float *A, int lda, const XDNN_FP16 *packedB,
         float beta, float *C, int ldc) {
-    
-    // Create a reference implementation for compatibility with tests
-    // This is simpler but more accurate than the block-based approach
     
     // Apply beta scaling to C matrix
     if (beta == 0.0f) {
@@ -114,28 +118,39 @@ void xdnn_hgemm_f32f16f32_compute(bool transA, int M, int N, int K,
         }
     }
     
-    // Direct reference implementation for accuracy
+    // Direct reference implementation for accuracy - corrected to access packedB properly
+    const int pack_b_k_block_size = HGEMM_MR; // Block size for K-dimension of B during packing
+    const int pack_b_n_block_size = HGEMM_NR; // Block size for N-dimension of B during packing
+    const int num_n_blocks_in_packedb = (N + pack_b_n_block_size - 1) / pack_b_n_block_size;
+
     for (int m = 0; m < M; m++) {
-        for (int n = 0; n < N; n++) {
+        for (int n_outer = 0; n_outer < N; n_outer++) { // Renamed 'n' to 'n_outer' to avoid conflict
             float sum = 0.0f;
             
-            // Compute dot product for this output element
-            if (transA) {
-                for (int k = 0; k < K; k++) {
-                    float a_val = A[k * lda + m];
-                    float b_val = _xdnn_to_float(packedB[k * N + n]);
-                    sum += a_val * b_val;
+            for (int k_outer = 0; k_outer < K; k_outer++) { // Renamed 'k' to 'k_outer'
+                float a_val;
+                if (transA) {
+                    a_val = A[k_outer * lda + m];
+                } else {
+                    a_val = A[m * lda + k_outer];
                 }
-            } else {
-                for (int k = 0; k < K; k++) {
-                    float a_val = A[m * lda + k];
-                    float b_val = _xdnn_to_float(packedB[k * N + n]);
-                    sum += a_val * b_val;
-                }
+
+                // Calculate indices for accessing packedB
+                // B is logically KxN. We need element B[k_outer, n_outer]
+                int k_block_major_idx = k_outer / pack_b_k_block_size;
+                int k_minor_idx       = k_outer % pack_b_k_block_size;
+
+                int n_block_major_idx = n_outer / pack_b_n_block_size;
+                int n_minor_idx       = n_outer % pack_b_n_block_size;
+                
+                int packed_b_idx = (k_block_major_idx * num_n_blocks_in_packedb + n_block_major_idx) * (pack_b_k_block_size * pack_b_n_block_size) +
+                                   k_minor_idx * pack_b_n_block_size + n_minor_idx;
+
+                float b_val = _xdnn_to_float(packedB[packed_b_idx]);
+                sum += a_val * b_val;
             }
             
-            // Update C with accumulated result
-            C[m * ldc + n] += alpha * sum;
+            C[m * ldc + n_outer] += alpha * sum;
         }
     }
 }

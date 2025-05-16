@@ -1,4 +1,3 @@
-#include "conversion.h"
 #include <gtest/gtest.h>
 #include <random>
 #include <cmath>
@@ -16,6 +15,13 @@
 #include "data_types/float16.h"
 #include "data_types/uint4x2.h"
 #include "../platform_detection.h"
+
+// Constants for block sizes to optimize cache usage - needed for F32U4F32Test
+#define HGEMM_MC 64
+#define HGEMM_NC 240
+#define HGEMM_KC 256
+#define HGEMM_MR 8
+#define HGEMM_NR 16 // Since each UINT4x2 contains 2 values, use double the NR
 
 // Helper function to initialize random matrices
 template<typename T>
@@ -188,7 +194,7 @@ TEST_F(HGEMMTest, F32F16F32Test) {
     reference_gemm_mixed(transA, transB, M, N, K, alpha, A, lda, B, ldb, beta, C_reference, ldc);
 
     // Compare results
-    const float epsilon = 10.0f;  // Significantly increased to account for FP16 precision and implementation differences
+    const float epsilon = 2e-2f;  // Increased from 1e-2f to accommodate FP16 precision differences
     for (int i = 0; i < M * N; ++i) {
         EXPECT_NEAR(C[i], C_reference[i], epsilon);
     }
@@ -394,13 +400,6 @@ TEST_F(HGEMMTest, F32S8F32Test) {
             }
         }
 
-        // Print first few values for debugging
-        std::cout << "First few values of C and C_reference:" << std::endl;
-        for (int i = 0; i < std::min(5, M * N); ++i) {
-            std::cout << "C[" << i << "] = " << C[i] 
-                      << ", C_reference[" << i << "] = " << C_reference[i] << std::endl;
-        }
-
         // Compare results with a higher epsilon for int8 quantization
         const float epsilon = 0.5f;  // Keep increased epsilon for int8 quantization differences
         int mismatchCount = 0;
@@ -413,12 +412,6 @@ TEST_F(HGEMMTest, F32S8F32Test) {
             
             if (fabs(C[i] - C_reference[i]) > epsilon) {
                 mismatchCount++;
-                if (mismatchCount <= 3) {  // Limit output to just a few mismatches
-                    std::cout << "Mismatch at " << i 
-                              << ": C=" << C[i] 
-                              << " C_ref=" << C_reference[i] 
-                              << " (diff=" << fabs(C[i] - C_reference[i]) << ")" << std::endl;
-                }
             }
             EXPECT_NEAR(C[i], C_reference[i], epsilon);
         }
@@ -537,9 +530,21 @@ TEST_F(HGEMMTest, F32U4F32Test) {
 
         // Call the function to test with try/catch to capture any segfaults
         try {
-            // Use the direct function which handles its own memory
-            xdnn_hgemm_f32u4f32(transA, transB, M, N, K, alpha, A, lda, 
-                              B, ldb, scales, zeros_f, beta, C, ldc);
+            // Try using the packb function first to ensure proper memory layout
+            // Calculate correct size based on block sizes in xdnn_hgemm_f32u4f32_packb
+            int kb = (K/2 + HGEMM_KC - 1) / HGEMM_KC;
+            int nb = (N + HGEMM_NR - 1) / HGEMM_NR;
+            size_t packed_size = nb * kb * HGEMM_KC * HGEMM_NR;
+            
+            XDNN_UINT4x2* packed_B = static_cast<XDNN_UINT4x2*>(aligned_alloc(alignment, packed_size * sizeof(XDNN_UINT4x2)));
+            deleter.ptrs.push_back(packed_B);
+            
+            // Pack B matrix first
+            xdnn_hgemm_f32u4f32_packb(transB, N, K, B, ldb, packed_B);
+            
+            // Then use the compute function with the packed matrix
+            xdnn_hgemm_f32u4f32_compute(transA, M, N, K, alpha, A, lda, 
+                                       packed_B, scales, zeros_f, beta, C, ldc);
         } catch (const std::exception& e) {
             FAIL() << "Exception during xdnn_hgemm_f32u4f32: " << e.what();
         } catch (...) {
@@ -594,16 +599,8 @@ TEST_F(HGEMMTest, F32U4F32Test) {
             }
         }
 
-        // Print first few values for debugging
-        std::cout << "First few values of C and C_reference in F32U4F32Test:" << std::endl;
-        for (int i = 0; i < std::min(5, M * N); ++i) {
-            std::cout << "C[" << i << "] = " << C[i] 
-                      << ", C_reference[" << i << "] = " << C_reference[i] << std::endl;
-        }
-
         // Compare results with a higher epsilon due to uint4 quantization
         const float epsilon = 1.0f;  // Keep higher epsilon for quantization differences
-        int mismatchCount = 0;
         for (int i = 0; i < M * N; ++i) {
             if (std::isnan(C[i]) || std::isnan(C_reference[i])) {
                 FAIL() << "NaN detected at index " << i 
@@ -611,15 +608,6 @@ TEST_F(HGEMMTest, F32U4F32Test) {
                        << ", C_reference[i]=" << C_reference[i];
             }
             
-            if (fabs(C[i] - C_reference[i]) > epsilon) {
-                mismatchCount++;
-                if (mismatchCount <= 3) {  // Limit output to just a few mismatches
-                    std::cout << "Mismatch at " << i 
-                              << ": C=" << C[i] 
-                              << " C_ref=" << C_reference[i] 
-                              << " (diff=" << fabs(C[i] - C_reference[i]) << ")" << std::endl;
-                }
-            }
             EXPECT_NEAR(C[i], C_reference[i], epsilon);
         }
         
