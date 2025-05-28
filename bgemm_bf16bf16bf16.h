@@ -38,7 +38,7 @@ void xdnn_bgemm_bf16bf16bf16_compute_gelu(bool transA, int M, int N, int K,
 // ldres, residential matrix stride
 void xdnn_bgemm_bf16bf16bf16_compute_resext(bool transA, int M, int N, int K,
         float alpha, const XDNN_BF16 *A, int lda, const XDNN_BF16 *packedB,
-        float beta, XDNN_BF16 *C, int ldc, const float *bias,
+        float beta, XDNN_BF16 *C, int ldc, const XDNN_BF16 *bias,
         float gamma, const XDNN_BF16 *res, int ldres);
 
 // C = [alpha * A * packedB + beta * C] * res
@@ -50,18 +50,18 @@ void xdnn_bgemm_bf16bf16bf16_compute_resmul(bool transA, int M, int N, int K,
 // To compute bgemm w/ bias_add: C = alpha * A * packedB + beta * C + bias
 void xdnn_bgemm_bf16bf16bf16_compute_biasadd(bool transA, int M, int N, int K,
         float alpha, const XDNN_BF16 *A, int lda, const XDNN_BF16 *packedB,
-        float beta, XDNN_BF16 *C, int ldc, const float *bias);
+        float beta, XDNN_BF16 *C, int ldc, const XDNN_BF16 *bias);
 
 // To compute bgemm w/ bias_add: C = RELU(alpha * A * packedB + beta * C + bias)
 void xdnn_bgemm_bf16bf16bf16_compute_biasadd_relu(bool transA, int M, int N, int K,
         float alpha, const XDNN_BF16 *A, int lda, const XDNN_BF16 *packedB,
-        float beta, XDNN_BF16 *C, int ldc, const float *bias);
+        float beta, XDNN_BF16 *C, int ldc, const XDNN_BF16 *bias);
 
 // C = alpha * A * packedB + beta * C + bias + res
 // ldres, redidential matrix stride
 void xdnn_bgemm_bf16bf16bf16_compute_residential(bool transA, int M, int N, int K,
         float alpha, const XDNN_BF16 *A, int lda, const XDNN_BF16 *packedB,
-        float beta, XDNN_BF16 *C, int ldc, const float *bias, const XDNN_BF16 *res, int ldres);
+        float beta, XDNN_BF16 *C, int ldc, const XDNN_BF16 *bias, const XDNN_BF16 *res, int ldres);
 
 // ================================================================================
 // Below is single thread small bgemm

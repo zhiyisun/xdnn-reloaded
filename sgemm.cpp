@@ -220,3 +220,53 @@ void xdnn_sgemm_compute_residential(bool transA, int M, int N, int K,
         }
     }
 }
+
+// Compute SGEMM with extended residential connection (assumed to be addition)
+void xdnn_sgemm_compute_resext(bool transA, int M, int N, int K,
+                                   float alpha, const float *A, int lda, const float *packedB,
+                                   float beta, float *C, int ldc, const float *bias, float gamma, const float *res, int ldres) {
+    // Compute regular SGEMM with bias
+    xdnn_sgemm_compute_biasadd(transA, M, N, K, alpha, A, lda, packedB, beta, C, ldc, bias);
+    
+    // Add residential connection scaled by gamma
+    for (int i = 0; i < M; i++) {
+        for (int j = 0; j < N; j++) {
+            C[i * ldc + j] += gamma * res[i * ldres + j];
+        }
+    }
+}
+
+// Compute SGEMM with residential multiplication
+void xdnn_sgemm_compute_resmul(bool transA, int M, int N, int K,
+                                   float alpha, const float *A, int lda, const float *packedB,
+                                   float beta, float *C, int ldc, const float *res, int ldres) {
+    // Compute regular SGEMM
+    xdnn_sgemm_compute(transA, M, N, K, alpha, A, lda, packedB, beta, C, ldc);
+    
+    // Multiply by residential connection
+    for (int i = 0; i < M; i++) {
+        for (int j = 0; j < N; j++) {
+            C[i * ldc + j] *= res[i * ldres + j];
+        }
+    }
+}
+
+// ================================================================================
+// Below is single thread small sgemm
+// ================================================================================
+void small_sgemm(int M, int N, int K, const float *A, int lda, const float *B, int ldb, float *C, int ldc) {
+    // Assuming A, B are not transposed (transA=false, transB=false)
+    // Assuming alpha = 1.0f and beta = 0.0f (C is overwritten)
+
+    for (int i = 0; i < M; i++) {
+        for (int j = 0; j < N; j++) {
+            float sum = 0.0f;
+            for (int k = 0; k < K; k++) {
+                // A is M x K (row-major) -> A[i * lda + k]
+                // B is K x N (row-major) -> B[k * ldb + j]
+                sum += A[i * lda + k] * B[k * ldb + j];
+            }
+            C[i * ldc + j] = sum;
+        }
+    }
+}

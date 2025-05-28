@@ -1,520 +1,340 @@
 #include "conversion.h"
 #include "hgemm_f32u4f32.h"
-#include "intrinsic_ext.h"
 #include <cstring>
-#include <immintrin.h>
 #include <algorithm>
+#include <immintrin.h>
 #include <cmath>
-#include <cfloat>
 #include <limits>
-#include <cassert>
-#include <iostream>
 
-// Constants for block sizes to optimize cache usage
-#define HGEMM_MC 64
-#define HGEMM_NC 240
-#define HGEMM_KC 256
-
-// HGEMM constants for UINT4 operations
-#define HGEMM_MR 8
-#define HGEMM_NR 16 // Since each UINT4x2 contains 2 values, use double the NR
-
-// Helper function to compute SILU activation: x * sigmoid(x)
-inline float silu_activate(float x) {
-    return x / (1.0f + expf(-x));
+// Helper functions for activation
+inline float silu(float x) {
+    return x / (1.0f + std::exp(-x));
 }
 
-// Helper function to compute GELU activation
-inline float gelu_activate(float x) {
-    // Approximation of GELU
-    return 0.5f * x * (1.0f + tanhf(0.7978845608f * (x + 0.044715f * x * x * x)));
+inline float gelu(float x) {
+    // GELU approximation
+    return 0.5f * x * (1.0f + std::tanh(std::sqrt(2.0f / M_PI) * (x + 0.044715f * x * x * x)));
 }
 
-// Helper function to convert a float to 4-bit unsigned integer
-inline uint8_t float_to_u4(float x, float scale, float zero) {
-    // Quantize: (x - zero) / scale, then clamp to [0, 15]
-    float quantized = (x - zero) / scale;
-    int32_t int_val = static_cast<int32_t>(std::round(quantized));
-    return static_cast<uint8_t>(std::min(std::max(int_val, 0), 15));
+// Helper functions to get and set 4-bit values
+static uint8_t get_u4_val_static(const XDNN_UINT4x2* data, int index) {
+    const uint8_t* byte_data = reinterpret_cast<const uint8_t*>(data);
+    uint8_t packed_byte = byte_data[index / 2];
+    if (index % 2 == 0) {
+        return packed_byte & 0x0F; // Lower nibble
+    } else {
+        return (packed_byte >> 4) & 0x0F; // Upper nibble
+    }
 }
 
-// Helper function to convert 4-bit unsigned integers to float
-inline void u4x2_to_float(const XDNN_UINT4x2& u4x2, float scale1, float scale2, 
-                          float zero1, float zero2, float& val1, float& val2) {
-    // Extract the two 4-bit values
-    uint8_t val_u4_1 = u4x2.get_v1();
-    uint8_t val_u4_2 = u4x2.get_v2();
-    
-    // Dequantize: val * scale + zero
-    val1 = val_u4_1 * scale1 + zero1;
-    val2 = val_u4_2 * scale2 + zero2;
+// Helper to set individual uint4 values into XDNN_UINT4x2
+static void set_u4_val_static(XDNN_UINT4x2* data, int index, uint8_t val) {
+    uint8_t* byte_data = reinterpret_cast<uint8_t*>(data);
+    int byte_idx = index / 2;
+    uint8_t current_byte = byte_data[byte_idx];
+    if (index % 2 == 0) { // Lower nibble
+        byte_data[byte_idx] = (current_byte & 0xF0) | (val & 0x0F);
+    } else { // Upper nibble
+        byte_data[byte_idx] = (current_byte & 0x0F) | ((val & 0x0F) << 4);
+    }
 }
 
-// Quantize a matrix from float to UINT4x2
+// Quantize FP32 to UINT4 (4-bit unsigned integer)
 void xdnn_hgemm_f32u4f32_quantize(bool transB, int N, int K, const float *B, int ldb,
-        float quantization_rate, XDNN_UINT4x2 *quantizedB, int ldqb, float *scaleB, float *zeroB) {
+                                 float quantization_rate, XDNN_UINT4x2 *quantizedB, int ldqb, float *scaleB, float *zeroB) {
+    const int num_quant_cols = transB ? K : N;
+    const int num_quant_rows = transB ? N : K;
 
-    // Process column by column (or row by row if transposed)
-    if (transB) {
-        // B is in N x K format
-        for (int n = 0; n < N; n++) {
-            // Find min and max values in this column
-            float maxVal = -FLT_MAX;
-            float minVal = FLT_MAX;
-            
-            for (int k = 0; k < K; k++) {
-                float val = B[n * ldb + k];
-                maxVal = std::max(maxVal, val);
-                minVal = std::min(minVal, val);
-            }
-            
-            // Compute scale and zero point based on range
-            float range = maxVal - minVal;
-            
-            // Apply quantization rate if specified
-            if (quantization_rate > 0.0f && quantization_rate < 1.0f) {
-                float center = (maxVal + minVal) / 2.0f;
-                float half_range = range / 2.0f * quantization_rate;
-                minVal = center - half_range;
-                maxVal = center + half_range;
-                range = maxVal - minVal;
-            }
-            
-            // Avoid division by zero
-            float scale = range > 0.0f ? range / 15.0f : 1.0f;
-            scaleB[n] = scale;
-            zeroB[n] = minVal;
-            
-            // Quantize the column - pack 2 values into each UINT4x2
-            for (int k = 0; k < K; k += 2) {
-                uint8_t val1 = float_to_u4(B[n * ldb + k], scale, minVal);
-                // If we're at the end and K is odd, use padding
-                uint8_t val2 = (k + 1 < K) ? float_to_u4(B[n * ldb + k + 1], scale, minVal) : 0;
-                
-                // Create the packed UINT4x2 value
-                quantizedB[n * ldqb + k/2].set(val1, val2);
-            }
+    if (num_quant_rows == 0 || num_quant_cols == 0) {
+        // Zero out the output arrays if they're provided
+        for (int j = 0; j < num_quant_cols; ++j) {
+            scaleB[j] = 0.0f;
+            zeroB[j] = 0.0f;
         }
-    } else {
-        // B is in K x N format
-        for (int n = 0; n < N; n++) {
-            // Find min and max values in this column
-            float maxVal = -FLT_MAX;
-            float minVal = FLT_MAX;
+        return;
+    }
+    
+    // Calculate scale and zero point for each column
+    for (int j = 0; j < num_quant_cols; ++j) {
+        // Find min and max values in this column
+        float col_min = std::numeric_limits<float>::max();
+        float col_max = std::numeric_limits<float>::lowest();
+        
+        for (int i = 0; i < num_quant_rows; ++i) {
+            float val = transB ? B[j * ldb + i] : B[i * ldb + j];
+            col_min = std::min(col_min, val);
+            col_max = std::max(col_max, val);
+        }
+        
+        // Apply quantization rate if specified
+        if (quantization_rate < 1.0f && col_max > col_min) {
+            float center = (col_max + col_min) / 2.0f;
+            float half_range = (col_max - col_min) / 2.0f * quantization_rate;
+            col_min = center - half_range;
+            col_max = center + half_range;
+        }
+        
+        // Calculate scale (avoid division by zero)
+        float scale = (col_max == col_min) ? 1.0f : (col_max - col_min) / 16.0f; // Use 16.0f to match reference
+        if (scale == 0.0f) scale = 1e-9f;
+        
+        scaleB[j] = scale;
+        zeroB[j] = col_min;
+    }
+    
+    // Quantize values
+    for (int i = 0; i < num_quant_rows; ++i) {
+        for (int j = 0; j < num_quant_cols; ++j) {
+            float val = transB ? B[j * ldb + i] : B[i * ldb + j];
+            float col_min = zeroB[j];
+            float scale = scaleB[j];
             
-            for (int k = 0; k < K; k++) {
-                float val = B[k * ldb + n];
-                maxVal = std::max(maxVal, val);
-                minVal = std::min(minVal, val);
-            }
+            // Clip value to range [col_min, col_min + 16*scale]
+            float val_clipped = std::max(col_min, std::min(val, col_min + 16.0f * scale));
             
-            // Compute scale and zero point based on range
-            float range = maxVal - minVal;
+            // Quantize value
+            float q = std::round((val_clipped - col_min) / scale);
+            uint8_t quantized_val = static_cast<uint8_t>(std::max(0.0f, std::min(15.0f, q)));
             
-            // Apply quantization rate if specified
-            if (quantization_rate > 0.0f && quantization_rate < 1.0f) {
-                float center = (maxVal + minVal) / 2.0f;
-                float half_range = range / 2.0f * quantization_rate;
-                minVal = center - half_range;
-                maxVal = center + half_range;
-                range = maxVal - minVal;
-            }
-            
-            // Avoid division by zero
-            float scale = range > 0.0f ? range / 15.0f : 1.0f;
-            scaleB[n] = scale;
-            zeroB[n] = minVal;
-            
-            // Quantize the column - pack 2 values into each UINT4x2
-            for (int k = 0; k < K; k += 2) {
-                uint8_t val1 = float_to_u4(B[k * ldb + n], scale, minVal);
-                // If we're at the end and K is odd, use padding
-                uint8_t val2 = (k + 1 < K) ? float_to_u4(B[(k + 1) * ldb + n], scale, minVal) : 0;
-                
-                // Create the packed UINT4x2 value
-                quantizedB[k/2 * ldqb + n].set(val1, val2);
-            }
+            // Store in quantizedB using row-major layout (to match reference implementation)
+            int u4_index = i * num_quant_cols + j;
+            set_u4_val_static(quantizedB, u4_index, quantized_val);
         }
     }
 }
 
-// Main HGEMM function that handles different matrix layouts
+// Helper function to dequantize UINT4x2 to float
+inline void uint4x2_to_float(const XDNN_UINT4x2& u4x2, float scale, float zero, float& val1, float& val2) {
+    val1 = u4x2.get_v1() * scale + zero;
+    val2 = u4x2.get_v2() * scale + zero;
+}
+
+// Main HGEMM implementation with UINT4 quantized B matrix
 void xdnn_hgemm_f32u4f32(bool transA, bool transB, int M, int N, int K,
-        float alpha, const float *A, int lda, const XDNN_UINT4x2 *quantizedB, int ldb, const float *scaleB, const float *zeroB,
-        float beta, float *C, int ldc) {
-
-    // Validate pointers
-    if (quantizedB == nullptr || scaleB == nullptr || zeroB == nullptr || C == nullptr) {
-        std::cerr << "Error: One or more input pointers are null in xdnn_hgemm_f32u4f32." << std::endl;
-        return;
-    }
-
-    // Validate dimensions and parameters
-    assert(M > 0 && N > 0 && K > 0);
-    assert(lda >= K && ldc >= N);
-    assert(quantizedB != nullptr && scaleB != nullptr && zeroB != nullptr && C != nullptr);
-
-    // Scale C matrix by beta if needed
-    if (beta == 0.0f) {
-        for (int i = 0; i < M; i++) {
-            memset(&C[i * ldc], 0, N * sizeof(float));
-        }
-    } else if (beta != 1.0f) {
+                        float alpha, const float *A, int lda, const XDNN_UINT4x2 *B, int ldb, const float *scaleB, const float *zeroB,
+                        float beta, float *C, int ldc) {
+    // Apply beta scaling to C
+    if (beta != 1.0f) {
         for (int i = 0; i < M; i++) {
             for (int j = 0; j < N; j++) {
                 C[i * ldc + j] *= beta;
             }
         }
     }
-
-    // Direct implementation that doesn't use packed B
-    for (int m = 0; m < M; m++) {
-        for (int n = 0; n < N; n++) {
-            float sum = 0.0f;
-
-            // Get scale and zero point for this column
-            float current_col_scale = scaleB[n];
-            float current_col_zero = zeroB[n];
-
-            // Process pairs of elements since each UINT4x2 contains 2 values
-            for (int k_pair_idx = 0; k_pair_idx < (K + 1) / 2; k_pair_idx++) {
-                int k_actual_idx1 = k_pair_idx * 2;
-                int k_actual_idx2 = k_pair_idx * 2 + 1;
-
-                // Ensure indices are within bounds
-                if (k_actual_idx1 >= K) continue;
-
-                XDNN_UINT4x2 b_quant_pair_val;
-                if (transB) {
-                    // Access quantizedB[row=n][col=k_pair_idx]
-                    b_quant_pair_val = quantizedB[n * ldb + k_pair_idx];
-                } else {
-                    // Access quantizedB[row=k_pair_idx][col=n]
-                    b_quant_pair_val = quantizedB[k_pair_idx * ldb + n];
-                }
-
-                uint8_t val_u4_1 = b_quant_pair_val.get_v1();
-                uint8_t val_u4_2 = b_quant_pair_val.get_v2();
-
-                // Dequantize
-                float b_val1 = val_u4_1 * current_col_scale + current_col_zero;
-                float b_val2 = val_u4_2 * current_col_scale + current_col_zero;
-
-                // Get values from A based on layout
-                float a_val1 = transA ? A[k_actual_idx1 * lda + m] : A[m * lda + k_actual_idx1];
-                float a_val2 = (k_actual_idx2 < K) ? (transA ? A[k_actual_idx2 * lda + m] : A[m * lda + k_actual_idx2]) : 0.0f;
-
-                // Accumulate the product
-                sum += a_val1 * b_val1;
-                if (k_actual_idx2 < K) {
-                    sum += a_val2 * b_val2;
-                }
-            }
-
-            // Update C with the result
-            C[m * ldc + n] += alpha * sum;
-        }
-    }
-}
-
-// Pack matrix B for efficient computation
-void xdnn_hgemm_f32u4f32_packb(bool transB, int N, int K, const XDNN_UINT4x2 *quantizedB, int ldb, XDNN_UINT4x2 *packedB) {
-
-    // Validate pointers
-    if (quantizedB == nullptr || packedB == nullptr) {
-        std::cerr << "Error: Null pointer detected in xdnn_hgemm_f32u4f32_packb." << std::endl;
-        return;
-    }
-
-    // Calculate sizes for packing - note K/2 because each UINT4x2 holds 2 values
-    int kb = (K/2 + HGEMM_KC - 1) / HGEMM_KC;
-    int nb = (N + HGEMM_NR - 1) / HGEMM_NR;
     
-    // Zero initialize the entire packed buffer
-    memset(packedB, 0, nb * kb * HGEMM_KC * HGEMM_NR * sizeof(XDNN_UINT4x2));
+    // Matrix multiplication with alpha scaling and dequantization
+    // K is the original K, but actual packed K is (K+1)/2 (since each UINT4x2 contains two values)
+    int packed_K = (K + 1) / 2;
     
-    if (transB) {
-        // B is in N x K/2 format (each column has K/2 UINT4x2 elements)
-        for (int k_block = 0; k_block < K/2; k_block += HGEMM_KC) {
-            int k_size = std::min(HGEMM_KC, K/2 - k_block);
-            
-            for (int n_block = 0; n_block < N; n_block += HGEMM_NR) {
-                int n_size = std::min(HGEMM_NR, N - n_block);
-
-                // Calculate offset in the packed buffer
-                int offset = (k_block / HGEMM_KC) * nb * HGEMM_KC * HGEMM_NR + 
-                             (n_block / HGEMM_NR) * HGEMM_KC * HGEMM_NR;
-
-                for (int k = 0; k < k_size; k++) {
-                    for (int n = 0; n < n_size; n++) {
-                        // Ensure offset is within bounds
-                        if (offset + k * HGEMM_NR + n >= nb * kb * HGEMM_KC * HGEMM_NR) {
-                            std::cerr << "Error: Out-of-bounds write detected in xdnn_hgemm_f32u4f32_packb." << std::endl;
-                            return;
-                        }
-
-                        packedB[offset + k * HGEMM_NR + n] = quantizedB[(n_block + n) * ldb + (k_block + k)];
+    if (!transA && !transB) {
+        // A: M×K, B: K×N
+        for (int i = 0; i < M; i++) {
+            for (int j = 0; j < N; j++) {
+                float sum = 0.0f;
+                for (int pk = 0; pk < packed_K; pk++) {
+                    int k = pk * 2;
+                    float b_val1, b_val2;
+                    uint4x2_to_float(B[pk * ldb + j], scaleB[j], zeroB[j], b_val1, b_val2);
+                    
+                    sum += A[i * lda + k] * b_val1;
+                    if (k + 1 < K) {
+                        sum += A[i * lda + k + 1] * b_val2;
                     }
                 }
+                C[i * ldc + j] += alpha * sum;
             }
         }
-    } else {
-        // B is in K/2 x N format (each column has K/2 UINT4x2 elements)
-        for (int k_block = 0; k_block < K/2; k_block += HGEMM_KC) {
-            int k_size = std::min(HGEMM_KC, K/2 - k_block);
-            
-            for (int n_block = 0; n_block < N; n_block += HGEMM_NR) {
-                int n_size = std::min(HGEMM_NR, N - n_block);
-
-                // Calculate offset in the packed buffer
-                int offset = (k_block / HGEMM_KC) * nb * HGEMM_KC * HGEMM_NR + 
-                             (n_block / HGEMM_NR) * HGEMM_KC * HGEMM_NR;
-
-                for (int k = 0; k < k_size; k++) {
-                    for (int n = 0; n < n_size; n++) {
-                        // Ensure offset is within bounds
-                        if (offset + k * HGEMM_NR + n >= nb * kb * HGEMM_KC * HGEMM_NR) {
-                            std::cerr << "Error: Out-of-bounds write detected in xdnn_hgemm_f32u4f32_packb." << std::endl;
-                            return;
-                        }
-
-                        packedB[offset + k * HGEMM_NR + n] = quantizedB[(k_block + k) * ldb + (n_block + n)];
+    } else if (transA && !transB) {
+        // A: K×M, B: K×N
+        for (int i = 0; i < M; i++) {
+            for (int j = 0; j < N; j++) {
+                float sum = 0.0f;
+                for (int pk = 0; pk < packed_K; pk++) {
+                    int k = pk * 2;
+                    float b_val1, b_val2;
+                    uint4x2_to_float(B[pk * ldb + j], scaleB[j], zeroB[j], b_val1, b_val2);
+                    
+                    sum += A[k * lda + i] * b_val1;
+                    if (k + 1 < K) {
+                        sum += A[(k + 1) * lda + i] * b_val2;
                     }
                 }
+                C[i * ldc + j] += alpha * sum;
+            }
+        }
+    } else if (!transA && transB) {
+        // A: M×K, B: N×K
+        for (int i = 0; i < M; i++) {
+            for (int j = 0; j < N; j++) {
+                float sum = 0.0f;
+                for (int pk = 0; pk < packed_K; pk++) {
+                    int k = pk * 2;
+                    float b_val1, b_val2;
+                    uint4x2_to_float(B[j * ldb + pk], scaleB[j], zeroB[j], b_val1, b_val2);
+                    
+                    sum += A[i * lda + k] * b_val1;
+                    if (k + 1 < K) {
+                        sum += A[i * lda + k + 1] * b_val2;
+                    }
+                }
+                C[i * ldc + j] += alpha * sum;
+            }
+        }
+    } else { // transA && transB
+        // A: K×M, B: N×K
+        for (int i = 0; i < M; i++) {
+            for (int j = 0; j < N; j++) {
+                float sum = 0.0f;
+                for (int pk = 0; pk < packed_K; pk++) {
+                    int k = pk * 2;
+                    float b_val1, b_val2;
+                    uint4x2_to_float(B[j * ldb + pk], scaleB[j], zeroB[j], b_val1, b_val2);
+                    
+                    sum += A[k * lda + i] * b_val1;
+                    if (k + 1 < K) {
+                        sum += A[(k + 1) * lda + i] * b_val2;
+                    }
+                }
+                C[i * ldc + j] += alpha * sum;
             }
         }
     }
 }
 
-// Basic HGEMM computation with packed B matrix
+// Pack matrix B for optimized computation
+void xdnn_hgemm_f32u4f32_packb(bool transB, int N, int K, const XDNN_UINT4x2 *B, int ldb, XDNN_UINT4x2 *packedB) {
+    // Reference: see reference_packb_u4 in test_hgemm_f32u4f32.cpp
+    // Output packedB is row-major KxN, tightly packed 4-bit
+    for (int k = 0; k < K; ++k) {
+        for (int n = 0; n < N; ++n) {
+            int src_idx = transB ? (n * ldb + k) : (k * ldb + n);
+            int dst_idx = k * N + n;
+            uint8_t val = get_u4_val_static(B, src_idx);
+            set_u4_val_static(packedB, dst_idx, val);
+        }
+    }
+}
+
+// Compute HGEMM with pre-packed UINT4 B matrix
 void xdnn_hgemm_f32u4f32_compute(bool transA, int M, int N, int K,
-        float alpha, const float *A, int lda, const XDNN_UINT4x2 *packedB, const float *scaleB, const float *zeroB,
-        float beta, float *C, int ldc, int groupsize) {
+                                float alpha, const float *A, int lda, const XDNN_UINT4x2 *packedB, const float *scaleB, const float *zeroB,
+                                float beta, float *C, int ldc, int groupsize) {
+    // This implementation is based on reference_hgemm_f32u4f32_compute in test_hgemm_f32u4f32.cpp
     
-    // Validate pointers
-    if (A == nullptr || packedB == nullptr || scaleB == nullptr || zeroB == nullptr || C == nullptr) {
-        std::cerr << "Error: Null pointer detected in xdnn_hgemm_f32u4f32_compute." << std::endl;
-        return;
-    }
-    
-    // Scale C matrix by beta if needed
+    // Handle beta scaling
     if (beta == 0.0f) {
-        for (int i = 0; i < M; i++) {
-            memset(&C[i * ldc], 0, N * sizeof(float));
+        // Zero out the output matrix
+        for (int m = 0; m < M; ++m) {
+            for (int n = 0; n < N; ++n) {
+                C[m * ldc + n] = 0.0f;
+            }
         }
     } else if (beta != 1.0f) {
-        for (int i = 0; i < M; i++) {
-            for (int j = 0; j < N; j++) {
-                C[i * ldc + j] *= beta;
+        // Scale the output matrix by beta
+        for (int m = 0; m < M; ++m) {
+            for (int n = 0; n < N; ++n) {
+                C[m * ldc + n] *= beta;
             }
         }
     }
     
-    // Use a simpler, more robust implementation to avoid memory issues
-    for (int m = 0; m < M; m++) {
-        for (int n = 0; n < N; n++) {
+    // Skip computation if dimensions are zero
+    if (M == 0 || N == 0 || K == 0) return;
+    
+    // Matrix multiplication
+    for (int m = 0; m < M; ++m) {
+        for (int n = 0; n < N; ++n) {
             float sum = 0.0f;
-            
-            // Get scale and zero point for this column
-            float scale = groupsize > 0 ? scaleB[n / groupsize] : scaleB[n];
-            float zero = groupsize > 0 ? zeroB[n / groupsize] : zeroB[n];
-            
-            // Iterate through every two elements in K dimension (since each UINT4x2 contains 2 values)
-            for (int k = 0; k < K / 2; k++) {
-                // Get the packed value
-                const XDNN_UINT4x2 &packed = packedB[k * N + n];
-                
-                // Extract the two 4-bit values
-                uint8_t val_u4_1 = packed.get_v1();
-                uint8_t val_u4_2 = packed.get_v2();
-                
-                // Dequantize the values
-                float val1 = val_u4_1 * scale + zero;
-                float val2 = val_u4_2 * scale + zero;
-                
-                // Matrix multiply with A
-                if (transA) {
-                    sum += A[(k*2) * lda + m] * val1 + A[(k*2 + 1) * lda + m] * val2;
-                } else {
-                    sum += A[m * lda + (k*2)] * val1 + A[m * lda + (k*2 + 1)] * val2;
-                }
+            for (int k = 0; k < K; ++k) {
+                float a_val = transA ? A[k * lda + m] : A[m * lda + k];
+                // Dequantize B: packedB is KxN row-major, 4-bit per value
+                int b_idx = k * N + n;
+                uint8_t q_val = get_u4_val_static(packedB, b_idx);
+                float b_val = scaleB[n] * q_val + zeroB[n];
+                sum += a_val * b_val;
             }
             
-            // Handle odd K case - if K is odd, the last element is processed separately
-            if (K % 2 != 0) {
-                int k = K / 2;
-                const XDNN_UINT4x2 &packed = packedB[k * N + n];
-                uint8_t val_u4_1 = packed.get_v1();
-                float val1 = val_u4_1 * scale + zero;
-                
-                if (transA) {
-                    sum += A[(k*2) * lda + m] * val1;
-                } else {
-                    sum += A[m * lda + (k*2)] * val1;
-                }
-            }
-            
-            // Update C with accumulated result
+            // Add to output with alpha scaling
             C[m * ldc + n] += alpha * sum;
         }
     }
 }
 
-// HGEMM with SILU activation
+// Compute HGEMM with SiLU activation
 void xdnn_hgemm_f32u4f32_compute_silu(bool transA, int M, int N, int K,
-        float alpha, const float *A, int lda, const XDNN_UINT4x2 *packedB, const float *scaleB, const float *zeroB,
-        float beta, float *C, int ldc, int groupsize) {
-    
-    // First compute standard HGEMM
-    xdnn_hgemm_f32u4f32_compute(transA, M, N, K, alpha, A, lda, packedB, scaleB, zeroB, beta, C, ldc, groupsize);
-    
-    // Then apply SILU activation
-    for (int i = 0; i < M; i++) {
-        for (int j = 0; j < N; j++) {
-            C[i * ldc + j] = silu_activate(C[i * ldc + j]);
+                                     float alpha, const float *A, int lda, const XDNN_UINT4x2 *packedB, const float *scaleB, const float *zeroB,
+                                     float beta, float *C, int ldc, int groupsize) {
+    xdnn_hgemm_f32u4f32_compute(transA, M, N, K, alpha, A, lda, packedB, scaleB, zeroB, beta, C, ldc);
+    for (int i = 0; i < M; ++i) {
+        for (int j = 0; j < N; ++j) {
+            C[i * ldc + j] = silu(C[i * ldc + j]);
         }
     }
 }
 
-// HGEMM with GELU activation
 void xdnn_hgemm_f32u4f32_compute_gelu(bool transA, int M, int N, int K,
-        float alpha, const float *A, int lda, const XDNN_UINT4x2 *packedB, const float *scaleB, const float *zeroB,
-        float beta, float *C, int ldc, int groupsize) {
-    
-    // First compute standard HGEMM
-    xdnn_hgemm_f32u4f32_compute(transA, M, N, K, alpha, A, lda, packedB, scaleB, zeroB, beta, C, ldc, groupsize);
-    
-    // Then apply GELU activation
-    for (int i = 0; i < M; i++) {
-        for (int j = 0; j < N; j++) {
-            C[i * ldc + j] = gelu_activate(C[i * ldc + j]);
+                                     float alpha, const float *A, int lda, const XDNN_UINT4x2 *packedB, const float *scaleB, const float *zeroB,
+                                     float beta, float *C, int ldc, int groupsize) {
+    xdnn_hgemm_f32u4f32_compute(transA, M, N, K, alpha, A, lda, packedB, scaleB, zeroB, beta, C, ldc);
+    for (int i = 0; i < M; ++i) {
+        for (int j = 0; j < N; ++j) {
+            C[i * ldc + j] = gelu(C[i * ldc + j]);
         }
     }
 }
 
-// HGEMM with extended residual connection
-void xdnn_hgemm_f32u4f32_compute_resext(bool transA, int M, int N, int K,
-        float alpha, const float *A, int lda, const XDNN_UINT4x2 *packedB, const float *scaleB, const float *zeroB,
-        float beta, float *C, int ldc, const float *bias,
-        float gamma, const float *res, int ldres, int groupsize) {
-    
-    // First compute standard HGEMM
-    xdnn_hgemm_f32u4f32_compute(transA, M, N, K, alpha, A, lda, packedB, scaleB, zeroB, beta, C, ldc, groupsize);
-    
-    // Then add bias and scaled residual
-    for (int i = 0; i < M; i++) {
-        for (int j = 0; j < N; j++) {
-            // Add bias if provided
-            if (bias) C[i * ldc + j] += bias[j];
-            
-            // Add scaled residual
-            C[i * ldc + j] += gamma * res[i * ldres + j];
-        }
-    }
-}
-
-// HGEMM with residual multiplication (element-wise)
-void xdnn_hgemm_f32u4f32_compute_resmul(bool transA, int M, int N, int K,
-        float alpha, const float *A, int lda, const XDNN_UINT4x2 *packedB, const float *scaleB, const float *zeroB,
-        float beta, float *C, int ldc, const float *res, int ldres, int groupsize) {
-    
-    // First compute standard HGEMM
-    xdnn_hgemm_f32u4f32_compute(transA, M, N, K, alpha, A, lda, packedB, scaleB, zeroB, beta, C, ldc, groupsize);
-    
-    // Then multiply by residual (element-wise)
-    for (int i = 0; i < M; i++) {
-        for (int j = 0; j < N; j++) {
-            C[i * ldc + j] *= res[i * ldres + j];
-        }
-    }
-}
-
-// HGEMM with bias addition
 void xdnn_hgemm_f32u4f32_compute_biasadd(bool transA, int M, int N, int K,
-        float alpha, const float *A, int lda, const XDNN_UINT4x2 *packedB, const float *scaleB, const float *zeroB,
-        float beta, float *C, int ldc, const float *bias, int groupsize) {
-    
-    // First compute standard HGEMM
-    xdnn_hgemm_f32u4f32_compute(transA, M, N, K, alpha, A, lda, packedB, scaleB, zeroB, beta, C, ldc, groupsize);
-    
-    // Then add bias
-    if (bias) {
-        for (int i = 0; i < M; i++) {
-            for (int j = 0; j < N; j++) {
-                C[i * ldc + j] += bias[j];
-            }
+                                        float alpha, const float *A, int lda, const XDNN_UINT4x2 *packedB, const float *scaleB, const float *zeroB,
+                                        float beta, float *C, int ldc, const float *bias, int groupsize) {
+    xdnn_hgemm_f32u4f32_compute(transA, M, N, K, alpha, A, lda, packedB, scaleB, zeroB, beta, C, ldc);
+    for (int i = 0; i < M; ++i) {
+        for (int j = 0; j < N; ++j) {
+            C[i * ldc + j] += bias[j];
         }
     }
 }
 
-// HGEMM with bias addition and ReLU activation
 void xdnn_hgemm_f32u4f32_compute_biasadd_relu(bool transA, int M, int N, int K,
-        float alpha, const float *A, int lda, const XDNN_UINT4x2 *packedB, const float *scaleB, const float *zeroB,
-        float beta, float *C, int ldc, const float *bias, int groupsize) {
-    
-    // First compute HGEMM with bias addition
-    xdnn_hgemm_f32u4f32_compute_biasadd(transA, M, N, K, alpha, A, lda, packedB, scaleB, zeroB, beta, C, ldc, bias, groupsize);
-    
-    // Then apply ReLU activation
-    for (int i = 0; i < M; i++) {
-        for (int j = 0; j < N; j++) {
+                                             float alpha, const float *A, int lda, const XDNN_UINT4x2 *packedB, const float *scaleB, const float *zeroB,
+                                             float beta, float *C, int ldc, const float *bias, int groupsize) {
+    xdnn_hgemm_f32u4f32_compute_biasadd(transA, M, N, K, alpha, A, lda, packedB, scaleB, zeroB, beta, C, ldc, bias);
+    for (int i = 0; i < M; ++i) {
+        for (int j = 0; j < N; ++j) {
             C[i * ldc + j] = std::max(0.0f, C[i * ldc + j]);
         }
     }
 }
 
-// HGEMM with bias addition and residual connection
 void xdnn_hgemm_f32u4f32_compute_residential(bool transA, int M, int N, int K,
-        float alpha, const float *A, int lda, const XDNN_UINT4x2 *packedB, const float *scaleB, const float *zeroB,
-        float beta, float *C, int ldc, const float *bias, const float *res, int ldres, int groupsize) {
-    
-    // First compute standard HGEMM
-    xdnn_hgemm_f32u4f32_compute(transA, M, N, K, alpha, A, lda, packedB, scaleB, zeroB, beta, C, ldc, groupsize);
-    
-    // Then add bias and residual
-    for (int i = 0; i < M; i++) {
-        for (int j = 0; j < N; j++) {
-            // Add bias if provided
-            if (bias) C[i * ldc + j] += bias[j];
-            
-            // Add residual
+                                            float alpha, const float *A, int lda, const XDNN_UINT4x2 *packedB, const float *scaleB, const float *zeroB,
+                                            float beta, float *C, int ldc, const float *bias, const float *res, int ldres, int groupsize) {
+    xdnn_hgemm_f32u4f32_compute_biasadd(transA, M, N, K, alpha, A, lda, packedB, scaleB, zeroB, beta, C, ldc, bias);
+    for (int i = 0; i < M; ++i) {
+        for (int j = 0; j < N; ++j) {
             C[i * ldc + j] += res[i * ldres + j];
         }
     }
 }
 
-// Small optimized HGEMM implementation for tiny matrices
-void small_hgemm_f32u4f32(int M, int N, int K, const float *A, int lda,
-        const XDNN_UINT4x2 *quantizedB, int ldb, const float *scaleB, const float *zeroB, float *C, int ldc) {
-    
-    // First zero initialize output
-    for (int i = 0; i < M; i++) {
-        memset(&C[i * ldc], 0, N * sizeof(float));
+void xdnn_hgemm_f32u4f32_compute_resext(bool transA, int M, int N, int K,
+                                       float alpha, const float *A, int lda, const XDNN_UINT4x2 *packedB, const float *scaleB, const float *zeroB,
+                                       float beta, float *C, int ldc, const float *bias, 
+                                       float gamma, const float *res, int ldres, int groupsize) {
+    xdnn_hgemm_f32u4f32_compute_biasadd(transA, M, N, K, alpha, A, lda, packedB, scaleB, zeroB, beta, C, ldc, bias);
+    for (int i = 0; i < M; ++i) {
+        for (int j = 0; j < N; ++j) {
+            C[i * ldc + j] += gamma * res[i * ldres + j];
+        }
     }
-    
-    // Basic implementation for small matrices without blocking
-    for (int i = 0; i < M; i++) {
-        for (int j = 0; j < N; j++) {
-            float sum = 0.0f;
-            float scale = scaleB[j];
-            float zero = zeroB[j];
-            
-            for (int k = 0; k < K/2; k++) {
-                float val1, val2;
-                u4x2_to_float(quantizedB[k * ldb + j], scale, scale, zero, zero, val1, val2);
-                
-                sum += A[i * lda + k*2] * val1 + 
-                       A[i * lda + k*2 + 1] * val2;
-            }
-            
-            // Handle case where K is odd
-            if (K % 2 == 1) {
-                float val1, val2;
-                u4x2_to_float(quantizedB[(K/2) * ldb + j], scale, scale, zero, zero, val1, val2);
-                sum += A[i * lda + K-1] * val1;
-            }
-            
-            C[i * ldc + j] = sum;
+}
+
+void xdnn_hgemm_f32u4f32_compute_resmul(bool transA, int M, int N, int K,
+                                       float alpha, const float *A, int lda, const XDNN_UINT4x2 *packedB, const float *scaleB, const float *zeroB,
+                                       float beta, float *C, int ldc, const float *res, int ldres, int groupsize) {
+    xdnn_hgemm_f32u4f32_compute(transA, M, N, K, alpha, A, lda, packedB, scaleB, zeroB, beta, C, ldc);
+    for (int i = 0; i < M; ++i) {
+        for (int j = 0; j < N; ++j) {
+            C[i * ldc + j] *= res[i * ldres + j];
         }
     }
 }

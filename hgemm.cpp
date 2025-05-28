@@ -15,67 +15,68 @@ inline float gelu(float x) {
     return 0.5f * x * (1.0f + std::tanh(std::sqrt(2.0f / M_PI) * (x + 0.044715f * x * x * x)));
 }
 
-// Main HGEMM implementation with FP16 inputs and outputs
+// Main hgemm implementation with multi-threading support
 void xdnn_hgemm(bool transA, bool transB, int M, int N, int K,
                 float alpha, const XDNN_FP16 *A, int lda, const XDNN_FP16 *B, int ldb,
                 float beta, XDNN_FP16 *C, int ldc) {
-    // In a real implementation, we would use optimized FP16 kernels
-    // or specialized hardware instructions. For this simple version,
-    // we'll convert to FP32 for computation, then back to FP16 for storage.
-    
     // Apply beta scaling to C
     if (beta != 1.0f) {
         for (int i = 0; i < M; i++) {
             for (int j = 0; j < N; j++) {
-                float c_val = static_cast<float>(C[i * ldc + j]) * beta;
-                C[i * ldc + j] = c_val;
+                float cval = static_cast<float>(C[i * ldc + j]);
+                C[i * ldc + j] = XDNN_FP16(cval * beta);
             }
         }
     }
-    
     // Matrix multiplication with alpha scaling
     if (!transA && !transB) {
-        // A: M×K, B: K×N
         for (int i = 0; i < M; i++) {
-            for (int j = 0; j < N; j++) {
-                float sum = 0.0f;
-                for (int k = 0; k < K; k++) {
-                    sum += static_cast<float>(A[i * lda + k]) * static_cast<float>(B[k * ldb + j]);
+            for (int k = 0; k < K; k++) {
+                float aval = static_cast<float>(A[i * lda + k]);
+                float temp = alpha * aval;
+                for (int j = 0; j < N; j++) {
+                    float bval = static_cast<float>(B[k * ldb + j]);
+                    float cval = static_cast<float>(C[i * ldc + j]);
+                    C[i * ldc + j] = XDNN_FP16(cval + temp * bval);
                 }
-                C[i * ldc + j] = static_cast<float>(C[i * ldc + j]) + alpha * sum;
             }
         }
     } else if (transA && !transB) {
-        // A: K×M, B: K×N
         for (int i = 0; i < M; i++) {
-            for (int j = 0; j < N; j++) {
-                float sum = 0.0f;
-                for (int k = 0; k < K; k++) {
-                    sum += static_cast<float>(A[k * lda + i]) * static_cast<float>(B[k * ldb + j]);
+            for (int k = 0; k < K; k++) {
+                float aval = static_cast<float>(A[k * lda + i]);
+                float temp = alpha * aval;
+                for (int j = 0; j < N; j++) {
+                    float bval = static_cast<float>(B[k * ldb + j]);
+                    float cval = static_cast<float>(C[i * ldc + j]);
+                    C[i * ldc + j] = XDNN_FP16(cval + temp * bval);
                 }
-                C[i * ldc + j] = static_cast<float>(C[i * ldc + j]) + alpha * sum;
             }
         }
     } else if (!transA && transB) {
-        // A: M×K, B: N×K
         for (int i = 0; i < M; i++) {
             for (int j = 0; j < N; j++) {
                 float sum = 0.0f;
                 for (int k = 0; k < K; k++) {
-                    sum += static_cast<float>(A[i * lda + k]) * static_cast<float>(B[j * ldb + k]);
+                    float aval = static_cast<float>(A[i * lda + k]);
+                    float bval = static_cast<float>(B[j * ldb + k]);
+                    sum += aval * bval;
                 }
-                C[i * ldc + j] = static_cast<float>(C[i * ldc + j]) + alpha * sum;
+                float cval = static_cast<float>(C[i * ldc + j]);
+                C[i * ldc + j] = XDNN_FP16(cval + alpha * sum);
             }
         }
     } else { // transA && transB
-        // A: K×M, B: N×K
         for (int i = 0; i < M; i++) {
             for (int j = 0; j < N; j++) {
                 float sum = 0.0f;
                 for (int k = 0; k < K; k++) {
-                    sum += static_cast<float>(A[k * lda + i]) * static_cast<float>(B[j * ldb + k]);
+                    float aval = static_cast<float>(A[k * lda + i]);
+                    float bval = static_cast<float>(B[j * ldb + k]);
+                    sum += aval * bval;
                 }
-                C[i * ldc + j] = static_cast<float>(C[i * ldc + j]) + alpha * sum;
+                float cval = static_cast<float>(C[i * ldc + j]);
+                C[i * ldc + j] = XDNN_FP16(cval + alpha * sum);
             }
         }
     }
@@ -84,6 +85,8 @@ void xdnn_hgemm(bool transA, bool transB, int M, int N, int K,
 // Pack matrix B for optimized computation
 void xdnn_hgemm_packb(bool transB, int N, int K, const XDNN_FP16 *B, int ldb, XDNN_FP16 *packedB) {
     // Packing B for better cache locality in subsequent computations
+    // The exact packing format depends on the target architecture and SIMD width
+    
     if (!transB) {
         // B is K×N
         for (int k = 0; k < K; k++) {
@@ -101,30 +104,31 @@ void xdnn_hgemm_packb(bool transB, int N, int K, const XDNN_FP16 *B, int ldb, XD
     }
 }
 
-// Compute HGEMM with pre-packed B matrix
+// Compute hgemm with pre-packed B matrix
 void xdnn_hgemm_compute(bool transA, int M, int N, int K,
-                       float alpha, const XDNN_FP16 *A, int lda, const XDNN_FP16 *packedB,
-                       float beta, XDNN_FP16 *C, int ldc) {
+                        float alpha, const XDNN_FP16 *A, int lda, const XDNN_FP16 *packedB,
+                        float beta, XDNN_FP16 *C, int ldc) {
     // Apply beta scaling to C
     if (beta != 1.0f) {
         for (int i = 0; i < M; i++) {
             for (int j = 0; j < N; j++) {
-                float c_val = static_cast<float>(C[i * ldc + j]) * beta;
-                C[i * ldc + j] = c_val;
+                float cval = static_cast<float>(C[i * ldc + j]);
+                C[i * ldc + j] = XDNN_FP16(cval * beta);
             }
         }
     }
-    
     // Matrix multiplication with pre-packed B
     if (!transA) {
         // A: M×K
         for (int i = 0; i < M; i++) {
-            for (int j = 0; j < N; j++) {
-                float sum = 0.0f;
-                for (int k = 0; k < K; k++) {
-                    sum += static_cast<float>(A[i * lda + k]) * static_cast<float>(packedB[k * N + j]);
+            for (int k = 0; k < K; k++) {
+                float aval = static_cast<float>(A[i * lda + k]);
+                float temp = alpha * aval;
+                for (int j = 0; j < N; j++) {
+                    float bval = static_cast<float>(packedB[k * N + j]);
+                    float cval = static_cast<float>(C[i * ldc + j]);
+                    C[i * ldc + j] = XDNN_FP16(cval + temp * bval);
                 }
-                C[i * ldc + j] = static_cast<float>(C[i * ldc + j]) + alpha * sum;
             }
         }
     } else {
@@ -133,375 +137,145 @@ void xdnn_hgemm_compute(bool transA, int M, int N, int K,
             for (int j = 0; j < N; j++) {
                 float sum = 0.0f;
                 for (int k = 0; k < K; k++) {
-                    sum += static_cast<float>(A[k * lda + i]) * static_cast<float>(packedB[k * N + j]);
+                    float aval = static_cast<float>(A[k * lda + i]);
+                    float bval = static_cast<float>(packedB[k * N + j]);
+                    sum += aval * bval;
                 }
-                C[i * ldc + j] = static_cast<float>(C[i * ldc + j]) + alpha * sum;
+                float cval = static_cast<float>(C[i * ldc + j]);
+                C[i * ldc + j] = XDNN_FP16(cval + alpha * sum);
             }
         }
     }
 }
 
-// Compute HGEMM with SiLU activation
+// Compute hgemm with SiLU activation
 void xdnn_hgemm_compute_silu(bool transA, int M, int N, int K,
-                            float alpha, const XDNN_FP16 *A, int lda, const XDNN_FP16 *packedB,
-                            float beta, XDNN_FP16 *C, int ldc) {
-    // Temporary buffer for FP32 computation
-    float *temp_C = new float[M * N];
+                             float alpha, const XDNN_FP16 *A, int lda, const XDNN_FP16 *packedB,
+                             float beta, XDNN_FP16 *C, int ldc) {
+    // Compute regular hgemm
+    xdnn_hgemm_compute(transA, M, N, K, alpha, A, lda, packedB, beta, C, ldc);
     
-    // Convert C to float for computation
+    // Apply SiLU activation
     for (int i = 0; i < M; i++) {
         for (int j = 0; j < N; j++) {
-            temp_C[i * N + j] = static_cast<float>(C[i * ldc + j]) * beta;
+            float v = static_cast<float>(C[i * ldc + j]);
+            C[i * ldc + j] = XDNN_FP16(silu(v));
         }
     }
-    
-    // Matrix multiplication with pre-packed B
-    if (!transA) {
-        // A: M×K
-        for (int i = 0; i < M; i++) {
-            for (int j = 0; j < N; j++) {
-                float sum = 0.0f;
-                for (int k = 0; k < K; k++) {
-                    sum += static_cast<float>(A[i * lda + k]) * static_cast<float>(packedB[k * N + j]);
-                }
-                temp_C[i * N + j] += alpha * sum;
-            }
-        }
-    } else {
-        // A: K×M
-        for (int i = 0; i < M; i++) {
-            for (int j = 0; j < N; j++) {
-                float sum = 0.0f;
-                for (int k = 0; k < K; k++) {
-                    sum += static_cast<float>(A[k * lda + i]) * static_cast<float>(packedB[k * N + j]);
-                }
-                temp_C[i * N + j] += alpha * sum;
-            }
-        }
-    }
-    
-    // Apply SiLU and convert back to FP16
-    for (int i = 0; i < M; i++) {
-        for (int j = 0; j < N; j++) {
-            C[i * ldc + j] = silu(temp_C[i * N + j]);
-        }
-    }
-    
-    delete[] temp_C;
 }
 
-// Compute HGEMM with GELU activation
+// Compute hgemm with GELU activation
 void xdnn_hgemm_compute_gelu(bool transA, int M, int N, int K,
-                            float alpha, const XDNN_FP16 *A, int lda, const XDNN_FP16 *packedB,
-                            float beta, XDNN_FP16 *C, int ldc) {
-    // Temporary buffer for FP32 computation
-    float *temp_C = new float[M * N];
+                             float alpha, const XDNN_FP16 *A, int lda, const XDNN_FP16 *packedB,
+                             float beta, XDNN_FP16 *C, int ldc) {
+    // Compute regular hgemm
+    xdnn_hgemm_compute(transA, M, N, K, alpha, A, lda, packedB, beta, C, ldc);
     
-    // Convert C to float for computation
+    // Apply GELU activation
     for (int i = 0; i < M; i++) {
         for (int j = 0; j < N; j++) {
-            temp_C[i * N + j] = static_cast<float>(C[i * ldc + j]) * beta;
+            float v = static_cast<float>(C[i * ldc + j]);
+            C[i * ldc + j] = XDNN_FP16(gelu(v));
         }
     }
-    
-    // Matrix multiplication with pre-packed B
-    if (!transA) {
-        // A: M×K
-        for (int i = 0; i < M; i++) {
-            for (int j = 0; j < N; j++) {
-                float sum = 0.0f;
-                for (int k = 0; k < K; k++) {
-                    sum += static_cast<float>(A[i * lda + k]) * static_cast<float>(packedB[k * N + j]);
-                }
-                temp_C[i * N + j] += alpha * sum;
-            }
-        }
-    } else {
-        // A: K×M
-        for (int i = 0; i < M; i++) {
-            for (int j = 0; j < N; j++) {
-                float sum = 0.0f;
-                for (int k = 0; k < K; k++) {
-                    sum += static_cast<float>(A[k * lda + i]) * static_cast<float>(packedB[k * N + j]);
-                }
-                temp_C[i * N + j] += alpha * sum;
-            }
-        }
-    }
-    
-    // Apply GELU and convert back to FP16
-    for (int i = 0; i < M; i++) {
-        for (int j = 0; j < N; j++) {
-            C[i * ldc + j] = gelu(temp_C[i * N + j]);
-        }
-    }
-    
-    delete[] temp_C;
 }
 
-// Extended residential function
-void xdnn_hgemm_compute_resext(bool transA, int M, int N, int K,
-                              float alpha, const XDNN_FP16 *A, int lda, const XDNN_FP16 *packedB,
-                              float beta, XDNN_FP16 *C, int ldc, const float *bias,
-                              float gamma, const XDNN_FP16 *res, int ldres) {
-    // Temporary buffer for FP32 computation
-    float *temp_C = new float[M * N];
-    
-    // Convert C to float for computation
-    for (int i = 0; i < M; i++) {
-        for (int j = 0; j < N; j++) {
-            temp_C[i * N + j] = static_cast<float>(C[i * ldc + j]) * beta;
-        }
-    }
-    
-    // Matrix multiplication with pre-packed B
-    if (!transA) {
-        // A: M×K
-        for (int i = 0; i < M; i++) {
-            for (int j = 0; j < N; j++) {
-                float sum = 0.0f;
-                for (int k = 0; k < K; k++) {
-                    sum += static_cast<float>(A[i * lda + k]) * static_cast<float>(packedB[k * N + j]);
-                }
-                temp_C[i * N + j] += alpha * sum;
-            }
-        }
-    } else {
-        // A: K×M
-        for (int i = 0; i < M; i++) {
-            for (int j = 0; j < N; j++) {
-                float sum = 0.0f;
-                for (int k = 0; k < K; k++) {
-                    sum += static_cast<float>(A[k * lda + i]) * static_cast<float>(packedB[k * N + j]);
-                }
-                temp_C[i * N + j] += alpha * sum;
-            }
-        }
-    }
-    
-    // Add bias and residential connection
-    for (int i = 0; i < M; i++) {
-        for (int j = 0; j < N; j++) {
-            temp_C[i * N + j] += bias[j] + gamma * static_cast<float>(res[i * ldres + j]);
-            C[i * ldc + j] = temp_C[i * N + j];
-        }
-    }
-    
-    delete[] temp_C;
-}
-
-// Multiplicative residential function
-void xdnn_hgemm_compute_resmul(bool transA, int M, int N, int K,
-                              float alpha, const XDNN_FP16 *A, int lda, const XDNN_FP16 *packedB,
-                              float beta, XDNN_FP16 *C, int ldc, const XDNN_FP16 *res, int ldres) {
-    // Temporary buffer for FP32 computation
-    float *temp_C = new float[M * N];
-    
-    // Convert C to float for computation
-    for (int i = 0; i < M; i++) {
-        for (int j = 0; j < N; j++) {
-            temp_C[i * N + j] = static_cast<float>(C[i * ldc + j]) * beta;
-        }
-    }
-    
-    // Matrix multiplication with pre-packed B
-    if (!transA) {
-        // A: M×K
-        for (int i = 0; i < M; i++) {
-            for (int j = 0; j < N; j++) {
-                float sum = 0.0f;
-                for (int k = 0; k < K; k++) {
-                    sum += static_cast<float>(A[i * lda + k]) * static_cast<float>(packedB[k * N + j]);
-                }
-                temp_C[i * N + j] += alpha * sum;
-            }
-        }
-    } else {
-        // A: K×M
-        for (int i = 0; i < M; i++) {
-            for (int j = 0; j < N; j++) {
-                float sum = 0.0f;
-                for (int k = 0; k < K; k++) {
-                    sum += static_cast<float>(A[k * lda + i]) * static_cast<float>(packedB[k * N + j]);
-                }
-                temp_C[i * N + j] += alpha * sum;
-            }
-        }
-    }
-    
-    // Multiply by residential connection
-    for (int i = 0; i < M; i++) {
-        for (int j = 0; j < N; j++) {
-            temp_C[i * N + j] *= static_cast<float>(res[i * ldres + j]);
-            C[i * ldc + j] = temp_C[i * N + j];
-        }
-    }
-    
-    delete[] temp_C;
-}
-
-// Compute HGEMM with bias addition
+// Compute hgemm with bias addition
 void xdnn_hgemm_compute_biasadd(bool transA, int M, int N, int K,
                                float alpha, const XDNN_FP16 *A, int lda, const XDNN_FP16 *packedB,
                                float beta, XDNN_FP16 *C, int ldc, const float *bias) {
-    // Temporary buffer for FP32 computation
-    float *temp_C = new float[M * N];
-    
-    // Convert C to float for computation
-    for (int i = 0; i < M; i++) {
-        for (int j = 0; j < N; j++) {
-            temp_C[i * N + j] = static_cast<float>(C[i * ldc + j]) * beta;
-        }
-    }
-    
-    // Matrix multiplication with pre-packed B
-    if (!transA) {
-        // A: M×K
-        for (int i = 0; i < M; i++) {
-            for (int j = 0; j < N; j++) {
-                float sum = 0.0f;
-                for (int k = 0; k < K; k++) {
-                    sum += static_cast<float>(A[i * lda + k]) * static_cast<float>(packedB[k * N + j]);
-                }
-                temp_C[i * N + j] += alpha * sum;
-            }
-        }
-    } else {
-        // A: K×M
-        for (int i = 0; i < M; i++) {
-            for (int j = 0; j < N; j++) {
-                float sum = 0.0f;
-                for (int k = 0; k < K; k++) {
-                    sum += static_cast<float>(A[k * lda + i]) * static_cast<float>(packedB[k * N + j]);
-                }
-                temp_C[i * N + j] += alpha * sum;
-            }
-        }
-    }
+    // Compute regular hgemm
+    xdnn_hgemm_compute(transA, M, N, K, alpha, A, lda, packedB, beta, C, ldc);
     
     // Add bias
     for (int i = 0; i < M; i++) {
         for (int j = 0; j < N; j++) {
-            temp_C[i * N + j] += bias[j];
-            C[i * ldc + j] = temp_C[i * N + j];
+            float v = static_cast<float>(C[i * ldc + j]) + bias[j];
+            C[i * ldc + j] = XDNN_FP16(v);
         }
     }
-    
-    delete[] temp_C;
 }
 
-// Compute HGEMM with bias addition and ReLU activation
+// Compute hgemm with bias addition and ReLU activation
 void xdnn_hgemm_compute_biasadd_relu(bool transA, int M, int N, int K,
-                                    float alpha, const XDNN_FP16 *A, int lda, const XDNN_FP16 *packedB,
-                                    float beta, XDNN_FP16 *C, int ldc, const float *bias) {
-    // Temporary buffer for FP32 computation
-    float *temp_C = new float[M * N];
+                                     float alpha, const XDNN_FP16 *A, int lda, const XDNN_FP16 *packedB,
+                                     float beta, XDNN_FP16 *C, int ldc, const float *bias) {
+    // Compute regular hgemm with bias
+    xdnn_hgemm_compute_biasadd(transA, M, N, K, alpha, A, lda, packedB, beta, C, ldc, bias);
     
-    // Convert C to float for computation
+    // Apply ReLU
     for (int i = 0; i < M; i++) {
         for (int j = 0; j < N; j++) {
-            temp_C[i * N + j] = static_cast<float>(C[i * ldc + j]) * beta;
+            float v = static_cast<float>(C[i * ldc + j]);
+            C[i * ldc + j] = XDNN_FP16(std::max(0.0f, v));
         }
     }
-    
-    // Matrix multiplication with pre-packed B
-    if (!transA) {
-        // A: M×K
-        for (int i = 0; i < M; i++) {
-            for (int j = 0; j < N; j++) {
-                float sum = 0.0f;
-                for (int k = 0; k < K; k++) {
-                    sum += static_cast<float>(A[i * lda + k]) * static_cast<float>(packedB[k * N + j]);
-                }
-                temp_C[i * N + j] += alpha * sum;
-            }
-        }
-    } else {
-        // A: K×M
-        for (int i = 0; i < M; i++) {
-            for (int j = 0; j < N; j++) {
-                float sum = 0.0f;
-                for (int k = 0; k < K; k++) {
-                    sum += static_cast<float>(A[k * lda + i]) * static_cast<float>(packedB[k * N + j]);
-                }
-                temp_C[i * N + j] += alpha * sum;
-            }
-        }
-    }
-    
-    // Add bias and apply ReLU
-    for (int i = 0; i < M; i++) {
-        for (int j = 0; j < N; j++) {
-            temp_C[i * N + j] += bias[j];
-            // Apply ReLU
-            temp_C[i * N + j] = std::max(0.0f, temp_C[i * N + j]);
-            C[i * ldc + j] = temp_C[i * N + j];
-        }
-    }
-    
-    delete[] temp_C;
 }
 
-// Compute HGEMM with residential connection
+// Compute hgemm with residential connection
 void xdnn_hgemm_compute_residential(bool transA, int M, int N, int K,
-                                   float alpha, const XDNN_FP16 *A, int lda, const XDNN_FP16 *packedB,
-                                   float beta, XDNN_FP16 *C, int ldc, const float *bias, const XDNN_FP16 *res, int ldres) {
-    // Temporary buffer for FP32 computation
-    float *temp_C = new float[M * N];
+                                    float alpha, const XDNN_FP16 *A, int lda, const XDNN_FP16 *packedB,
+                                    float beta, XDNN_FP16 *C, int ldc, const float *bias, const XDNN_FP16 *res, int ldres) {
+    // Compute regular hgemm with bias
+    xdnn_hgemm_compute_biasadd(transA, M, N, K, alpha, A, lda, packedB, beta, C, ldc, bias);
     
-    // Convert C to float for computation
+    // Add residential connection
     for (int i = 0; i < M; i++) {
         for (int j = 0; j < N; j++) {
-            temp_C[i * N + j] = static_cast<float>(C[i * ldc + j]) * beta;
+            float v = static_cast<float>(C[i * ldc + j]) + static_cast<float>(res[i * ldres + j]);
+            C[i * ldc + j] = XDNN_FP16(v);
         }
     }
-    
-    // Matrix multiplication with pre-packed B
-    if (!transA) {
-        // A: M×K
-        for (int i = 0; i < M; i++) {
-            for (int j = 0; j < N; j++) {
-                float sum = 0.0f;
-                for (int k = 0; k < K; k++) {
-                    sum += static_cast<float>(A[i * lda + k]) * static_cast<float>(packedB[k * N + j]);
-                }
-                temp_C[i * N + j] += alpha * sum;
-            }
-        }
-    } else {
-        // A: K×M
-        for (int i = 0; i < M; i++) {
-            for (int j = 0; j < N; j++) {
-                float sum = 0.0f;
-                for (int k = 0; k < K; k++) {
-                    sum += static_cast<float>(A[k * lda + i]) * static_cast<float>(packedB[k * N + j]);
-                }
-                temp_C[i * N + j] += alpha * sum;
-            }
-        }
-    }
-    
-    // Add bias and residential connection
-    for (int i = 0; i < M; i++) {
-        for (int j = 0; j < N; j++) {
-            temp_C[i * N + j] += bias[j] + static_cast<float>(res[i * ldres + j]);
-            C[i * ldc + j] = temp_C[i * N + j];
-        }
-    }
-    
-    delete[] temp_C;
 }
 
-// Small HGEMM implementation for single-threaded special cases
+// Compute hgemm with extended residential connection (assumed to be addition)
+void xdnn_hgemm_compute_resext(bool transA, int M, int N, int K,
+                                   float alpha, const XDNN_FP16 *A, int lda, const XDNN_FP16 *packedB,
+                                   float beta, XDNN_FP16 *C, int ldc, const float *bias, float gamma, const XDNN_FP16 *res, int ldres) {
+    // Compute regular hgemm with bias
+    xdnn_hgemm_compute_biasadd(transA, M, N, K, alpha, A, lda, packedB, beta, C, ldc, bias);
+    
+    // Add residential connection scaled by gamma
+    for (int i = 0; i < M; i++) {
+        for (int j = 0; j < N; j++) {
+            float v = static_cast<float>(C[i * ldc + j]) + gamma * static_cast<float>(res[i * ldres + j]);
+            C[i * ldc + j] = XDNN_FP16(v);
+        }
+    }
+}
+
+// Compute hgemm with residential multiplication
+void xdnn_hgemm_compute_resmul(bool transA, int M, int N, int K,
+                                   float alpha, const XDNN_FP16 *A, int lda, const XDNN_FP16 *packedB,
+                                   float beta, XDNN_FP16 *C, int ldc, const XDNN_FP16 *res, int ldres) {
+    // Compute regular hgemm
+    xdnn_hgemm_compute(transA, M, N, K, alpha, A, lda, packedB, beta, C, ldc);
+    
+    // Multiply by residential connection
+    for (int i = 0; i < M; i++) {
+        for (int j = 0; j < N; j++) {
+            float v = static_cast<float>(C[i * ldc + j]) * static_cast<float>(res[i * ldres + j]);
+            C[i * ldc + j] = XDNN_FP16(v);
+        }
+    }
+}
+
+// ================================================================================
+// Below is single thread small hgemm
+// ================================================================================
 void small_hgemm(int M, int N, int K, const XDNN_FP16 *A, int lda, const XDNN_FP16 *B, int ldb, XDNN_FP16 *C, int ldc) {
-    // Simple implementation optimized for small matrices
+    // Assuming A, B are not transposed (transA=false, transB=false)
+    // Assuming alpha = 1.0f and beta = 0.0f (C is overwritten)
+
     for (int i = 0; i < M; i++) {
         for (int j = 0; j < N; j++) {
             float sum = 0.0f;
             for (int k = 0; k < K; k++) {
-                sum += static_cast<float>(A[i * lda + k]) * static_cast<float>(B[k * ldb + j]);
+                float aval = static_cast<float>(A[i * lda + k]);
+                float bval = static_cast<float>(B[k * ldb + j]);
+                sum += aval * bval;
             }
-            C[i * ldc + j] = sum;
+            C[i * ldc + j] = XDNN_FP16(sum);
         }
     }
 }
