@@ -1,4 +1,5 @@
 #include "sgemm_f32f16bf16.h"
+#include "debug_print.h"
 #include <cstring>
 #include <immintrin.h>
 #include <algorithm>
@@ -9,6 +10,7 @@
 // Only supports transB=false, M=1, alpha=1, beta=0|1 for the next token calculation
 // in transformer attention mechanism
 void small_sgemm_f32f16bf16(bool transB, int M, int N, int K, float alpha, const float *A, int lda, const XDNN_FP16 *B, int ldb, float beta, XDNN_BF16 *C, int ldc) {
+    DEBUG_PRINT();
     // Check constraints as per header comment
     if (transB) {
         throw std::runtime_error("Not supported for transB=true");

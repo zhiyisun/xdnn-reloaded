@@ -5,6 +5,7 @@
 // for different activation functions and residual connections.
 
 #include "sgemm_f32nf4f32.h"
+#include "debug_print.h"
 #include <vector>
 #include <cmath>
 #include <algorithm>
@@ -13,6 +14,7 @@
 
 // Helper function to get individual nf4 values from XDNN_NF4x2
 static uint8_t get_nf4_val(const XDNN_NF4x2* data, int index) {
+    DEBUG_PRINT();
     const uint8_t* byte_data = reinterpret_cast<const uint8_t*>(data);
     uint8_t packed_byte = byte_data[index / 2];
     if (index % 2 == 0) {
@@ -24,6 +26,7 @@ static uint8_t get_nf4_val(const XDNN_NF4x2* data, int index) {
 
 // Helper to set individual nf4 values into XDNN_NF4x2
 static void set_nf4_val(XDNN_NF4x2* data, int index, uint8_t val) {
+    DEBUG_PRINT();
     uint8_t* byte_data = reinterpret_cast<uint8_t*>(data);
     int byte_idx = index / 2;
     uint8_t current_byte = byte_data[byte_idx];
@@ -41,7 +44,7 @@ extern "C" {
 // Symmetric Quantization per Columns
 void xdnn_sgemm_f32nf4f32_quantize(bool transB, int N, int K, const float *B, int ldb,
         float quantization_rate, XDNN_NF4x2 *quantizedB, int ldqb, float *scaleB, float *zeroB) {
-    
+    DEBUG_PRINT();
     // If input dimensions are invalid, nothing to do
     if (N <= 0 || K <= 0) {
         return;
@@ -113,6 +116,7 @@ void xdnn_sgemm_f32nf4f32_quantize(bool transB, int N, int K, const float *B, in
 
 // Pack matrix B for optimized computation
 void xdnn_sgemm_f32nf4f32_packb(bool transB, int N, int K, const XDNN_NF4x2 *B, int ldb, XDNN_NF4x2 *packedB) {
+    DEBUG_PRINT();
     // Output is always KxN, row-major, tightly packed 4-bit
     for (int k = 0; k < K; ++k) {
         for (int n = 0; n < N; ++n) {
@@ -128,6 +132,7 @@ void xdnn_sgemm_f32nf4f32_packb(bool transB, int N, int K, const XDNN_NF4x2 *B, 
 void xdnn_sgemm_f32nf4f32_compute(bool transA, int M, int N, int K,
         float alpha, const float *A, int lda, const XDNN_NF4x2 *packedB, const float *scaleB, const float *zeroB,
         float beta, float *C, int ldc) {
+    DEBUG_PRINT();
     // Implementation constraints
     if (!(alpha == 1.0f)) {
         std::cerr << "WARNING: xdnn_sgemm_f32nf4f32_compute only supports alpha = 1.0f" << std::endl;
@@ -175,6 +180,7 @@ void xdnn_sgemm_f32nf4f32_compute(bool transA, int M, int N, int K,
 void xdnn_sgemm_f32nf4f32(bool transA, bool transB, int M, int N, int K,
         float alpha, const float *A, int lda, const XDNN_NF4x2 *B, int ldb, const float *scaleB, const float *zeroB,
         float beta, float *C, int ldc) {
+    DEBUG_PRINT();
     // This function combines quantize + packb + compute
     // For now, simply call the compute function, assuming B is already quantized and packed
     xdnn_sgemm_f32nf4f32_compute(transA, M, N, K, alpha, A, lda, B, scaleB, zeroB, beta, C, ldc);
@@ -189,6 +195,7 @@ static float silu_activation(float x) {
 void xdnn_sgemm_f32nf4f32_compute_silu(bool transA, int M, int N, int K,
         float alpha, const float *A, int lda, const XDNN_NF4x2 *packedB, const float *scaleB, const float *zeroB,
         float beta, float *C, int ldc) {
+    DEBUG_PRINT();
     
     // First compute the regular matrix multiplication
     xdnn_sgemm_f32nf4f32_compute(transA, M, N, K, alpha, A, lda, packedB, scaleB, zeroB, beta, C, ldc);
@@ -210,6 +217,7 @@ static float gelu_approx_activation(float x) {
 void xdnn_sgemm_f32nf4f32_compute_gelu(bool transA, int M, int N, int K,
         float alpha, const float *A, int lda, const XDNN_NF4x2 *packedB, const float *scaleB, const float *zeroB,
         float beta, float *C, int ldc) {
+    DEBUG_PRINT();
     
     // First compute the regular matrix multiplication
     xdnn_sgemm_f32nf4f32_compute(transA, M, N, K, alpha, A, lda, packedB, scaleB, zeroB, beta, C, ldc);
@@ -226,6 +234,7 @@ void xdnn_sgemm_f32nf4f32_compute_gelu(bool transA, int M, int N, int K,
 void xdnn_sgemm_f32nf4f32_compute_biasadd(bool transA, int M, int N, int K,
         float alpha, const float *A, int lda, const XDNN_NF4x2 *packedB, const float *scaleB, const float *zeroB,
         float beta, float *C, int ldc, const float *bias) {
+    DEBUG_PRINT();
     
     // First compute the regular matrix multiplication
     xdnn_sgemm_f32nf4f32_compute(transA, M, N, K, alpha, A, lda, packedB, scaleB, zeroB, beta, C, ldc);
@@ -247,6 +256,7 @@ static float relu_activation(float x) {
 void xdnn_sgemm_f32nf4f32_compute_biasadd_relu(bool transA, int M, int N, int K,
         float alpha, const float *A, int lda, const XDNN_NF4x2 *packedB, const float *scaleB, const float *zeroB,
         float beta, float *C, int ldc, const float *bias) {
+    DEBUG_PRINT();
     
     // First compute with bias addition
     xdnn_sgemm_f32nf4f32_compute_biasadd(transA, M, N, K, alpha, A, lda, packedB, scaleB, zeroB, beta, C, ldc, bias);
@@ -263,6 +273,7 @@ void xdnn_sgemm_f32nf4f32_compute_biasadd_relu(bool transA, int M, int N, int K,
 void xdnn_sgemm_f32nf4f32_compute_residential(bool transA, int M, int N, int K,
         float alpha, const float *A, int lda, const XDNN_NF4x2 *packedB, const float *scaleB, const float *zeroB,
         float beta, float *C, int ldc, const float *bias, const float *res, int ldres) {
+    DEBUG_PRINT();
     
     // First compute with bias addition
     xdnn_sgemm_f32nf4f32_compute_biasadd(transA, M, N, K, alpha, A, lda, packedB, scaleB, zeroB, beta, C, ldc, bias);
@@ -280,6 +291,7 @@ void xdnn_sgemm_f32nf4f32_compute_resext(bool transA, int M, int N, int K,
         float alpha, const float *A, int lda, const XDNN_NF4x2 *packedB, const float *scaleB, const float *zeroB,
         float beta, float *C, int ldc, const float *bias, 
         float gamma, const float *res, int ldres) {
+    DEBUG_PRINT();
     
     // First compute with bias addition
     xdnn_sgemm_f32nf4f32_compute_biasadd(transA, M, N, K, alpha, A, lda, packedB, scaleB, zeroB, beta, C, ldc, bias);
@@ -296,6 +308,7 @@ void xdnn_sgemm_f32nf4f32_compute_resext(bool transA, int M, int N, int K,
 void xdnn_sgemm_f32nf4f32_compute_resmul(bool transA, int M, int N, int K,
         float alpha, const float *A, int lda, const XDNN_NF4x2 *packedB, const float *scaleB, const float *zeroB,
         float beta, float *C, int ldc, const float *res, int ldres) {
+    DEBUG_PRINT();
     
     // First compute the regular matrix multiplication
     xdnn_sgemm_f32nf4f32_compute(transA, M, N, K, alpha, A, lda, packedB, scaleB, zeroB, beta, C, ldc);
@@ -311,6 +324,7 @@ void xdnn_sgemm_f32nf4f32_compute_resmul(bool transA, int M, int N, int K,
 // Small SGEMM implementation for single-threaded small matrices
 void small_sgemm_f32nf4f32(int M, int N, int K, const float *A, int lda,
         const XDNN_NF4x2 *B, int ldb, const float *scaleB, const float *zeroB, float *C, int ldc) {
+    DEBUG_PRINT();
     
     // Implementation is similar to regular compute but optimized for small sizes
     // For now, we'll use the same implementation as the regular compute function

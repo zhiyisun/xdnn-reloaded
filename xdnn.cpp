@@ -1,5 +1,6 @@
 #include "conversion.h"
 #include "xdnn.h"
+#include "debug_print.h"
 #include <cmath>
 #include <algorithm>
 #include <cstring>
@@ -18,6 +19,7 @@ extern "C" {
 
 // Get XDNN library version as a string
 const char* xdnn_get_version() {
+    DEBUG_PRINT();
     static char version[32];
     snprintf(version, sizeof(version), "%d.%d.%d", 
              XDNN_MAJOR_VERSION, XDNN_MINOR_VERSION, XDNN_PATCH_VERSION);
@@ -26,6 +28,7 @@ const char* xdnn_get_version() {
 
 // Initialize the XDNN library
 bool xdnn_initialize() {
+    DEBUG_PRINT();
     if (g_xdnn_initialized) {
         return true;
     }
@@ -39,6 +42,7 @@ bool xdnn_initialize() {
 
 // Clean up any resources used by the XDNN library
 void xdnn_finalize() {
+    DEBUG_PRINT();
     if (!g_xdnn_initialized) {
         return;
     }
@@ -50,6 +54,7 @@ void xdnn_finalize() {
 
 // Get information about hardware capabilities
 int xdnn_get_hardware_capabilities() {
+    DEBUG_PRINT();
     int capabilities = 0;
     
     // Check for AVX support
@@ -77,12 +82,14 @@ int xdnn_get_hardware_capabilities() {
 
 // Set the number of threads for parallel execution
 void xdnn_set_num_threads(int num_threads) {
+    DEBUG_PRINT();
     // Implementation would depend on the threading model used
     // This is a placeholder for now
 }
 
 // Get the current number of threads used for parallel execution
 int xdnn_get_num_threads() {
+    DEBUG_PRINT();
     // Implementation would depend on the threading model used
     // This is a placeholder for now
     return 1;
@@ -90,6 +97,7 @@ int xdnn_get_num_threads() {
 
 // Helper function to convert between data types
 void xdnn_convert_data(const void* src, void* dst, int size, int src_type, int dst_type) {
+    DEBUG_PRINT();
     // Data type enumerations (should match definitions in data_types.h)
     enum {
         XDNN_DATA_TYPE_FP32 = 0,
@@ -132,7 +140,7 @@ void xdnn_gemm(bool transA, bool transB, int M, int N, int K,
                float alpha, const void* A, int lda, const void* B, int ldb,
                float beta, void* C, int ldc,
                int type_A, int type_B, int type_C) {
-    
+    DEBUG_PRINT();
     // Dispatch to the appropriate implementation based on types
     // This is a simplified example that only handles a few cases
     

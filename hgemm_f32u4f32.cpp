@@ -1,5 +1,6 @@
 #include "conversion.h"
 #include "hgemm_f32u4f32.h"
+#include "debug_print.h"
 #include <cstring>
 #include <algorithm>
 #include <immintrin.h>
@@ -8,16 +9,19 @@
 
 // Helper functions for activation
 inline float silu(float x) {
+    DEBUG_PRINT();
     return x / (1.0f + std::exp(-x));
 }
 
 inline float gelu(float x) {
+    DEBUG_PRINT();
     // GELU approximation
     return 0.5f * x * (1.0f + std::tanh(std::sqrt(2.0f / M_PI) * (x + 0.044715f * x * x * x)));
 }
 
 // Helper functions to get and set 4-bit values
 static uint8_t get_u4_val_static(const XDNN_UINT4x2* data, int index) {
+    DEBUG_PRINT();
     const uint8_t* byte_data = reinterpret_cast<const uint8_t*>(data);
     uint8_t packed_byte = byte_data[index / 2];
     if (index % 2 == 0) {
@@ -29,6 +33,7 @@ static uint8_t get_u4_val_static(const XDNN_UINT4x2* data, int index) {
 
 // Helper to set individual uint4 values into XDNN_UINT4x2
 static void set_u4_val_static(XDNN_UINT4x2* data, int index, uint8_t val) {
+    DEBUG_PRINT();
     uint8_t* byte_data = reinterpret_cast<uint8_t*>(data);
     int byte_idx = index / 2;
     uint8_t current_byte = byte_data[byte_idx];
@@ -42,6 +47,7 @@ static void set_u4_val_static(XDNN_UINT4x2* data, int index, uint8_t val) {
 // Quantize FP32 to UINT4 (4-bit unsigned integer)
 void xdnn_hgemm_f32u4f32_quantize(bool transB, int N, int K, const float *B, int ldb,
                                  float quantization_rate, XDNN_UINT4x2 *quantizedB, int ldqb, float *scaleB, float *zeroB) {
+    DEBUG_PRINT();
     const int num_quant_cols = transB ? K : N;
     const int num_quant_rows = transB ? N : K;
 
@@ -113,6 +119,7 @@ inline void uint4x2_to_float(const XDNN_UINT4x2& u4x2, float scale, float zero, 
 void xdnn_hgemm_f32u4f32(bool transA, bool transB, int M, int N, int K,
                         float alpha, const float *A, int lda, const XDNN_UINT4x2 *B, int ldb, const float *scaleB, const float *zeroB,
                         float beta, float *C, int ldc) {
+    DEBUG_PRINT();
     // Apply beta scaling to C
     if (beta != 1.0f) {
         for (int i = 0; i < M; i++) {
@@ -203,6 +210,7 @@ void xdnn_hgemm_f32u4f32(bool transA, bool transB, int M, int N, int K,
 
 // Pack matrix B for optimized computation
 void xdnn_hgemm_f32u4f32_packb(bool transB, int N, int K, const XDNN_UINT4x2 *B, int ldb, XDNN_UINT4x2 *packedB) {
+    DEBUG_PRINT();
     // Reference: see reference_packb_u4 in test_hgemm_f32u4f32.cpp
     // Output packedB is row-major KxN, tightly packed 4-bit
     for (int k = 0; k < K; ++k) {
@@ -219,6 +227,7 @@ void xdnn_hgemm_f32u4f32_packb(bool transB, int N, int K, const XDNN_UINT4x2 *B,
 void xdnn_hgemm_f32u4f32_compute(bool transA, int M, int N, int K,
                                 float alpha, const float *A, int lda, const XDNN_UINT4x2 *packedB, const float *scaleB, const float *zeroB,
                                 float beta, float *C, int ldc, int groupsize) {
+    DEBUG_PRINT();
     // This implementation is based on reference_hgemm_f32u4f32_compute in test_hgemm_f32u4f32.cpp
     
     // Handle beta scaling
@@ -264,6 +273,7 @@ void xdnn_hgemm_f32u4f32_compute(bool transA, int M, int N, int K,
 void xdnn_hgemm_f32u4f32_compute_silu(bool transA, int M, int N, int K,
                                      float alpha, const float *A, int lda, const XDNN_UINT4x2 *packedB, const float *scaleB, const float *zeroB,
                                      float beta, float *C, int ldc, int groupsize) {
+    DEBUG_PRINT();
     xdnn_hgemm_f32u4f32_compute(transA, M, N, K, alpha, A, lda, packedB, scaleB, zeroB, beta, C, ldc);
     for (int i = 0; i < M; ++i) {
         for (int j = 0; j < N; ++j) {
@@ -275,6 +285,7 @@ void xdnn_hgemm_f32u4f32_compute_silu(bool transA, int M, int N, int K,
 void xdnn_hgemm_f32u4f32_compute_gelu(bool transA, int M, int N, int K,
                                      float alpha, const float *A, int lda, const XDNN_UINT4x2 *packedB, const float *scaleB, const float *zeroB,
                                      float beta, float *C, int ldc, int groupsize) {
+    DEBUG_PRINT();
     xdnn_hgemm_f32u4f32_compute(transA, M, N, K, alpha, A, lda, packedB, scaleB, zeroB, beta, C, ldc);
     for (int i = 0; i < M; ++i) {
         for (int j = 0; j < N; ++j) {
@@ -286,6 +297,7 @@ void xdnn_hgemm_f32u4f32_compute_gelu(bool transA, int M, int N, int K,
 void xdnn_hgemm_f32u4f32_compute_biasadd(bool transA, int M, int N, int K,
                                         float alpha, const float *A, int lda, const XDNN_UINT4x2 *packedB, const float *scaleB, const float *zeroB,
                                         float beta, float *C, int ldc, const float *bias, int groupsize) {
+    DEBUG_PRINT();
     xdnn_hgemm_f32u4f32_compute(transA, M, N, K, alpha, A, lda, packedB, scaleB, zeroB, beta, C, ldc);
     for (int i = 0; i < M; ++i) {
         for (int j = 0; j < N; ++j) {
@@ -297,6 +309,7 @@ void xdnn_hgemm_f32u4f32_compute_biasadd(bool transA, int M, int N, int K,
 void xdnn_hgemm_f32u4f32_compute_biasadd_relu(bool transA, int M, int N, int K,
                                              float alpha, const float *A, int lda, const XDNN_UINT4x2 *packedB, const float *scaleB, const float *zeroB,
                                              float beta, float *C, int ldc, const float *bias, int groupsize) {
+    DEBUG_PRINT();
     xdnn_hgemm_f32u4f32_compute_biasadd(transA, M, N, K, alpha, A, lda, packedB, scaleB, zeroB, beta, C, ldc, bias);
     for (int i = 0; i < M; ++i) {
         for (int j = 0; j < N; ++j) {
@@ -308,6 +321,7 @@ void xdnn_hgemm_f32u4f32_compute_biasadd_relu(bool transA, int M, int N, int K,
 void xdnn_hgemm_f32u4f32_compute_residential(bool transA, int M, int N, int K,
                                             float alpha, const float *A, int lda, const XDNN_UINT4x2 *packedB, const float *scaleB, const float *zeroB,
                                             float beta, float *C, int ldc, const float *bias, const float *res, int ldres, int groupsize) {
+    DEBUG_PRINT();
     xdnn_hgemm_f32u4f32_compute_biasadd(transA, M, N, K, alpha, A, lda, packedB, scaleB, zeroB, beta, C, ldc, bias);
     for (int i = 0; i < M; ++i) {
         for (int j = 0; j < N; ++j) {
@@ -320,6 +334,7 @@ void xdnn_hgemm_f32u4f32_compute_resext(bool transA, int M, int N, int K,
                                        float alpha, const float *A, int lda, const XDNN_UINT4x2 *packedB, const float *scaleB, const float *zeroB,
                                        float beta, float *C, int ldc, const float *bias, 
                                        float gamma, const float *res, int ldres, int groupsize) {
+    DEBUG_PRINT();
     xdnn_hgemm_f32u4f32_compute_biasadd(transA, M, N, K, alpha, A, lda, packedB, scaleB, zeroB, beta, C, ldc, bias);
     for (int i = 0; i < M; ++i) {
         for (int j = 0; j < N; ++j) {
@@ -331,6 +346,7 @@ void xdnn_hgemm_f32u4f32_compute_resext(bool transA, int M, int N, int K,
 void xdnn_hgemm_f32u4f32_compute_resmul(bool transA, int M, int N, int K,
                                        float alpha, const float *A, int lda, const XDNN_UINT4x2 *packedB, const float *scaleB, const float *zeroB,
                                        float beta, float *C, int ldc, const float *res, int ldres, int groupsize) {
+    DEBUG_PRINT();
     xdnn_hgemm_f32u4f32_compute(transA, M, N, K, alpha, A, lda, packedB, scaleB, zeroB, beta, C, ldc);
     for (int i = 0; i < M; ++i) {
         for (int j = 0; j < N; ++j) {

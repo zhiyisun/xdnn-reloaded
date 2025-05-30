@@ -1,6 +1,7 @@
 #include "conversion.h"
 #include "transpose.h"
 #include "platform_detection.h"
+#include "debug_print.h"
 #include <cstring>
 #include <cassert>
 
@@ -9,6 +10,7 @@ namespace {
 template<typename T>
 void transpose_generic(const T *src, int src_rows, int src_cols, int src_stride, 
                        T *dst, int dst_stride) {
+    DEBUG_PRINT();
     for (int i = 0; i < src_rows; i++) {
         for (int j = 0; j < src_cols; j++) {
             dst[j * dst_stride + i] = src[i * src_stride + j];
@@ -18,6 +20,7 @@ void transpose_generic(const T *src, int src_rows, int src_cols, int src_stride,
 
 // SSE-optimized transpose for float32 (4x4 blocks)
 void transpose_sse_float_4x4(const float *src, int src_stride, float *dst, int dst_stride) {
+    DEBUG_PRINT();
     // Load 4x4 block from source
     __m128 row0 = _mm_loadu_ps(&src[0 * src_stride]);
     __m128 row1 = _mm_loadu_ps(&src[1 * src_stride]);
@@ -37,6 +40,7 @@ void transpose_sse_float_4x4(const float *src, int src_stride, float *dst, int d
 // SSE-optimized transpose for float32 matrices
 void transpose_sse_float(const float *src, int src_rows, int src_cols, int src_stride, 
                          float *dst, int dst_stride) {
+    DEBUG_PRINT();
     // Process blocks of 4x4
     int block_rows = (src_rows / 4) * 4;
     int block_cols = (src_cols / 4) * 4;
@@ -67,6 +71,7 @@ void transpose_sse_float(const float *src, int src_rows, int src_cols, int src_s
 // AVX-optimized transpose for float32 (8x8 blocks)
 void transpose_avx_float_8x8(const float *src, int src_stride, float *dst, int dst_stride) {
 #ifdef __AVX__
+    DEBUG_PRINT();
     // Load 8x8 block from source
     __m256 row0 = _mm256_loadu_ps(&src[0 * src_stride]);
     __m256 row1 = _mm256_loadu_ps(&src[1 * src_stride]);
@@ -128,6 +133,7 @@ void transpose_avx_float_8x8(const float *src, int src_stride, float *dst, int d
 void transpose_avx_float(const float *src, int src_rows, int src_cols, int src_stride, 
                         float *dst, int dst_stride) {
 #ifdef __AVX__
+    DEBUG_PRINT();
     // Process blocks of 8x8
     int block_rows = (src_rows / 8) * 8;
     int block_cols = (src_cols / 8) * 8;
@@ -180,6 +186,7 @@ void transpose_avx_float(const float *src, int src_rows, int src_cols, int src_s
 
 // Implementation of various transpose functions
 void xdnn_transpose(const float *src, int src_rows, int src_cols, int src_stride, float *dst, int dst_stride) {
+    DEBUG_PRINT();
     // Use the best implementation based on CPU capabilities
     xdnn::OptimizationLevel level = xdnn::getBestOptimizationLevel();
     
@@ -193,12 +200,14 @@ void xdnn_transpose(const float *src, int src_rows, int src_cols, int src_stride
 }
 
 void xdnn_transpose(const XDNN_BF16 *src, int src_rows, int src_cols, int src_stride, XDNN_BF16 *dst, int dst_stride) {
+    DEBUG_PRINT();
     // For now, use generic implementation for BF16
     // This can be optimized later with AVX-512 when available
     transpose_generic(src, src_rows, src_cols, src_stride, dst, dst_stride);
 }
 
 void xdnn_transpose(const int *src, int src_rows, int src_cols, int src_stride, int *dst, int dst_stride) {
+    DEBUG_PRINT();
     // For integers, use generic implementation for now
     // This can be optimized later
     transpose_generic(src, src_rows, src_cols, src_stride, dst, dst_stride);
@@ -206,18 +215,21 @@ void xdnn_transpose(const int *src, int src_rows, int src_cols, int src_stride, 
 
 // Optimized transpose functions for specific sizes
 void xdnn_transpose_16x16_v1(const int32_t *src, int src_stride, int32_t *dst, int dst_stride) {
+    DEBUG_PRINT();
     // 16x16 transpose implementation for int32
     // For now, use generic implementation
     transpose_generic(src, 16, 16, src_stride, dst, dst_stride);
 }
 
 void xdnn_transpose_16x16_v2(const int32_t *src, int src_stride, int32_t *dst, int dst_stride) {
+    DEBUG_PRINT();
     // Alternative 16x16 transpose implementation for int32
     // For now, same as v1
     xdnn_transpose_16x16_v1(src, src_stride, dst, dst_stride);
 }
 
 void xdnn_transpose_16xN_v1(const int32_t *src, int cols, int src_stride, int32_t *dst, int dst_stride) {
+    DEBUG_PRINT();
     // 16xN transpose implementation for int32
     // For now, use generic implementation
     transpose_generic(src, 16, cols, src_stride, dst, dst_stride);
@@ -225,6 +237,7 @@ void xdnn_transpose_16xN_v1(const int32_t *src, int cols, int src_stride, int32_
 
 // Special packing transposes for BF16
 void xdnn_transpose16x32_packBA16a16b2a_v1(const XDNN_BF16 *src, int src_stride, XDNN_BF16 *dst, int dst_stride) {
+    DEBUG_PRINT();
     // Specialized transpose for BF16 with packing pattern
     // This needs to be implemented with proper optimizations later
     for (int i = 0; i < 16; i++) {
@@ -236,12 +249,14 @@ void xdnn_transpose16x32_packBA16a16b2a_v1(const XDNN_BF16 *src, int src_stride,
 }
 
 void xdnn_transpose16x32_packBA16a16b2a_v2(const XDNN_BF16 *src, int src_stride, XDNN_BF16 *dst, int dst_stride) {
+    DEBUG_PRINT();
     // Alternative implementation of specialized transpose
     // For now, same as v1
     xdnn_transpose16x32_packBA16a16b2a_v1(src, src_stride, dst, dst_stride);
 }
 
 void xdnn_transpose16xN_packBA16a16b2a_v1(const XDNN_BF16 *src, int src_cols, int src_stride, XDNN_BF16 *dst, int dst_rows, int dst_stride) {
+    DEBUG_PRINT();
     // 16xN specialized transpose for BF16
     for (int i = 0; i < 16; i++) {
         for (int j = 0; j < src_cols; j++) {
@@ -253,6 +268,7 @@ void xdnn_transpose16xN_packBA16a16b2a_v1(const XDNN_BF16 *src, int src_cols, in
 
 // Special packing transposes for FP16
 void xdnn_transpose16x32_packBA16a16b2a_v1(const XDNN_FP16 *src, int src_stride, XDNN_FP16 *dst, int dst_stride) {
+    DEBUG_PRINT();
     // Specialized transpose for FP16 with packing pattern
     // This needs to be implemented with proper optimizations later
     for (int i = 0; i < 16; i++) {
@@ -264,12 +280,14 @@ void xdnn_transpose16x32_packBA16a16b2a_v1(const XDNN_FP16 *src, int src_stride,
 }
 
 void xdnn_transpose16x32_packBA16a16b2a_v2(const XDNN_FP16 *src, int src_stride, XDNN_FP16 *dst, int dst_stride) {
+    DEBUG_PRINT();
     // Alternative implementation of specialized transpose
     // For now, same as v1
     xdnn_transpose16x32_packBA16a16b2a_v1(src, src_stride, dst, dst_stride);
 }
 
 void xdnn_transpose16xN_packBA16a16b2a_v1(const XDNN_FP16 *src, int src_cols, int src_stride, XDNN_FP16 *dst, int dst_rows, int dst_stride) {
+    DEBUG_PRINT();
     // 16xN specialized transpose for FP16
     for (int i = 0; i < 16; i++) {
         for (int j = 0; j < src_cols; j++) {

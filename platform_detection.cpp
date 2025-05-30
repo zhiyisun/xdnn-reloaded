@@ -1,5 +1,6 @@
 #include "conversion.h"
 #include "platform_detection.h"
+#include "debug_print.h"
 
 #ifdef _WIN32
 #include <intrin.h>
@@ -11,6 +12,7 @@ namespace xdnn {
 
 // Helper function to execute cpuid instruction
 void cpuid(int info[4], int infoType) {
+    DEBUG_PRINT();
 #ifdef _WIN32
     __cpuid(info, infoType);
 #else
@@ -20,6 +22,7 @@ void cpuid(int info[4], int infoType) {
 
 // Helper function to execute cpuid instruction with subleaf
 void cpuidex(int info[4], int infoType, int subLeaf) {
+    DEBUG_PRINT();
 #ifdef _WIN32
     __cpuidex(info, infoType, subLeaf);
 #else
@@ -29,6 +32,7 @@ void cpuidex(int info[4], int infoType, int subLeaf) {
 
 // Implementation of CPU feature detection
 CPUFeatures detectCPUFeatures() {
+    DEBUG_PRINT();
     CPUFeatures features;
     int info[4];
     
@@ -74,6 +78,7 @@ CPUFeatures detectCPUFeatures() {
 
 // Get the best optimization level based on detected CPU features
 OptimizationLevel getBestOptimizationLevel() {
+    DEBUG_PRINT();
     CPUFeatures features = detectCPUFeatures();
     
     if (features.supportsAVX512()) {
@@ -93,6 +98,7 @@ OptimizationLevel getBestOptimizationLevel() {
 
 // Check if a specific optimization level is supported at runtime
 bool isOptimizationLevelSupported(OptimizationLevel level) {
+    DEBUG_PRINT();
     CPUFeatures features = detectCPUFeatures();
     
     switch (level) {

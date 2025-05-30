@@ -1,6 +1,7 @@
 #include "conversion.h"
 #include "amx_sgemm_bf16bf16bf16.h"
 #include "intrinsic_ext.h"
+#include "debug_print.h"
 #include <cstring>
 #include <immintrin.h>
 #include <algorithm>
@@ -15,6 +16,7 @@
 
 // AMX packing function for bfloat16 matrices
 int xdnn_small_amx_sgemm_bf16bf16bf16_packb_size(int N, int K, int block_rows, int block_cols) {
+    DEBUG_PRINT();
     int n_blocks = (N + block_cols - 1) / block_cols;
     int k_blocks = (K + block_rows - 1) / block_rows;
     return n_blocks * k_blocks * block_rows * block_cols * sizeof(XDNN_BF16);
@@ -22,6 +24,7 @@ int xdnn_small_amx_sgemm_bf16bf16bf16_packb_size(int N, int K, int block_rows, i
 
 void xdnn_small_amx_sgemm_bf16bf16bf16_packb(
         bool transB, int N, int K, const XDNN_BF16 *B, int stride, XDNN_BF16 *packedB, int size) {
+    DEBUG_PRINT();
     const int TILE_K = 16;
     const int TILE_N = 16;
     int n_blocks = (N + TILE_N - 1) / TILE_N;
@@ -87,6 +90,7 @@ void xdnn_small_amx_sgemm_bf16bf16bf16_packb(
 // AMX optimized GEMM computation for BF16 input and output
 void xdnn_small_amx_sgemm_bf16bf16bf16_compute(int M, int N, int K, const XDNN_BF16 *A, int lda,
         const XDNN_BF16 *packedB, int ldb, XDNN_BF16 *C, int ldc, float beta) {
+    DEBUG_PRINT();
     // Call the implementation with alpha = 1.0
     xdnn_small_amx_sgemm_bf16bf16bf16_compute_BA16a64b2a(M, N, K, A, lda, packedB, C, ldc, 1.0f, beta);
 }
@@ -94,6 +98,7 @@ void xdnn_small_amx_sgemm_bf16bf16bf16_compute(int M, int N, int K, const XDNN_B
 // AMX optimized GEMM computation for BF16 input and FP32 output
 void xdnn_small_amx_sgemm_bf16bf16f32_compute(int M, int N, int K, const XDNN_BF16 *A, int lda,
         const XDNN_BF16 *packedB, int ldb, float *C, int ldc, float beta) {
+    DEBUG_PRINT();
     // Call the implementation with alpha = 1.0
     xdnn_small_amx_sgemm_bf16bf16f32_compute_BA16a64b2a(M, N, K, A, lda, packedB, C, ldc, 1.0f, beta);
 }
@@ -101,6 +106,7 @@ void xdnn_small_amx_sgemm_bf16bf16f32_compute(int M, int N, int K, const XDNN_BF
 // BA16a64b2a AMX specialized implementation for BF16 input/output
 void xdnn_small_amx_sgemm_bf16bf16bf16_compute_BA16a64b2a(int M, int N, int K, const XDNN_BF16 *A,
         int lda, const XDNN_BF16 *packedB, XDNN_BF16 *C, int ldc, float alpha, float beta) {
+    DEBUG_PRINT();
     const int TILE_M = 16;
     const int TILE_N = 16;
     const int TILE_K = 16;  // Changed to match packing function
@@ -152,6 +158,7 @@ void xdnn_small_amx_sgemm_bf16bf16bf16_compute_BA16a64b2a(int M, int N, int K, c
 // BA16a64b2a AMX specialized implementation for BF16 input and FP32 output
 void xdnn_small_amx_sgemm_bf16bf16f32_compute_BA16a64b2a(int M, int N, int K, const XDNN_BF16 *A,
         int lda, const XDNN_BF16 *packedB, float *C, int ldc, float alpha, float beta) {
+    DEBUG_PRINT();
     // Implementation will use AMX tiles for optimized computation
     const int TILE_M = 16;  // AMX tile rows
     const int TILE_N = 16;  // AMX tile columns
@@ -203,6 +210,7 @@ void xdnn_small_amx_sgemm_bf16bf16f32_compute_BA16a64b2a(int M, int N, int K, co
 // Implementation of batch C functions
 void xdnn_small_amx_sgemm_bf16bf16bf16_compute_BA16a64b2a_batch_C(int M, int N, int K, const XDNN_BF16 *A, int lda,
         const XDNN_BF16 *packedBBatch[], XDNN_BF16 *CBatch[], const int *ldcb, const float *alphaBatch, int packedBBatchSize) {
+    DEBUG_PRINT();
     // Process each batch matrix multiplication A * B[i] = C[i]
     for (int b = 0; b < packedBBatchSize; b++) {
         xdnn_small_amx_sgemm_bf16bf16bf16_compute_BA16a64b2a(
@@ -213,6 +221,7 @@ void xdnn_small_amx_sgemm_bf16bf16bf16_compute_BA16a64b2a_batch_C(int M, int N, 
 void xdnn_small_amx_sgemm_bf16bf16bf16_compute_BA16a64b2a_batch_CM(int M, const int *NBatch, int K, const XDNN_BF16 *A,
         int lda, const XDNN_BF16 *packedBBatch[], XDNN_BF16 *CBatch[], const int *ldcb, const float *alphaBatch,
         int packedBBatchSize) {
+    DEBUG_PRINT();
     // Process each batch matrix multiplication A * B[i] = C[i], with variable N
     for (int b = 0; b < packedBBatchSize; b++) {
         xdnn_small_amx_sgemm_bf16bf16bf16_compute_BA16a64b2a(
@@ -223,6 +232,7 @@ void xdnn_small_amx_sgemm_bf16bf16bf16_compute_BA16a64b2a_batch_CM(int M, const 
 void xdnn_small_amx_sgemm_bf16bf16bf16_compute_BA16a64b2a_batch_A(int M, int N, int K, const XDNN_BF16 *ABatch[],
         const int *ldab, const XDNN_BF16 *packedBBatch[], XDNN_BF16 *C, int ldc, const float *alphaBatch,
         int packedBBatchSize) {
+    DEBUG_PRINT();
     // Zero initialize the output matrix
     for (int m = 0; m < M; m++) {
         memset(&C[m * ldc], 0, N * sizeof(XDNN_BF16));
@@ -249,6 +259,7 @@ void xdnn_small_amx_sgemm_bf16bf16bf16_compute_BA16a64b2a_batch_A(int M, int N, 
 void xdnn_small_amx_sgemm_bf16bf16bf16_compute_BA16a64b2a_batch_AM(int M, int N, const int *KBatch,
         const XDNN_BF16 *ABatch[], const int *ldab, const XDNN_BF16 *packedBBatch[], XDNN_BF16 *C, int ldc,
         const float *alphaBatch, int packedBBatchSize) {
+    DEBUG_PRINT();
     // Zero initialize the output matrix
     for (int m = 0; m < M; m++) {
         memset(&C[m * ldc], 0, N * sizeof(XDNN_BF16));
@@ -275,6 +286,7 @@ void xdnn_small_amx_sgemm_bf16bf16bf16_compute_BA16a64b2a_batch_AM(int M, int N,
 const char *xdnn_small_amx_sgemm_bf16f8bf16_compute_test_all(int option, int M, const int *NBatch, const int *KBatch,
         const XDNN_BF16 *ABatch[], const int *ldab, const XDNN_BF16 *packedBBatch[], XDNN_BF16 *C16[], float *C32[],
         const int *ldcb, const float *alphaBatch, int packedBBatchSize, int layers) {
+    DEBUG_PRINT();
     // Test function that runs different SGEMM variants based on option parameter
     switch (option) {
         case 0:

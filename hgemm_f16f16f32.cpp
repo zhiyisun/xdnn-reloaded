@@ -1,5 +1,6 @@
 #include "conversion.h"
 #include "hgemm_f16f16f32.h"
+#include "debug_print.h"
 #include <cstring>
 #include <algorithm>
 #include <immintrin.h>
@@ -7,10 +8,12 @@
 
 // Helper functions for activation
 inline float silu(float x) {
+    DEBUG_PRINT();
     return x / (1.0f + std::exp(-x));
 }
 
 inline float gelu(float x) {
+    DEBUG_PRINT();
     // GELU approximation
     return 0.5f * x * (1.0f + std::tanh(std::sqrt(2.0f / M_PI) * (x + 0.044715f * x * x * x)));
 }
@@ -19,6 +22,7 @@ inline float gelu(float x) {
 void xdnn_hgemm_f16f16f32(bool transA, bool transB, int M, int N, int K,
                          float alpha, const XDNN_FP16 *A, int lda, const XDNN_FP16 *B, int ldb,
                          float beta, float *C, int ldc) {
+    DEBUG_PRINT();
     // Apply beta scaling to C
     if (beta != 1.0f) {
         for (int i = 0; i < M; i++) {
@@ -78,6 +82,7 @@ void xdnn_hgemm_f16f16f32(bool transA, bool transB, int M, int N, int K,
 
 // Pack matrix B for optimized computation
 void xdnn_hgemm_f16f16f32_packb(bool transB, int N, int K, const XDNN_FP16 *B, int ldb, XDNN_FP16 *packedB) {
+    DEBUG_PRINT();
     // Packing B for better cache locality in subsequent computations
     if (!transB) {
         // B is K×N
@@ -100,6 +105,7 @@ void xdnn_hgemm_f16f16f32_packb(bool transB, int N, int K, const XDNN_FP16 *B, i
 void xdnn_hgemm_f16f16f32_compute(bool transA, int M, int N, int K,
                                  float alpha, const XDNN_FP16 *A, int lda, const XDNN_FP16 *packedB,
                                  float beta, float *C, int ldc) {
+    DEBUG_PRINT();
     // Apply beta scaling to C
     if (beta != 1.0f) {
         for (int i = 0; i < M; i++) {
@@ -139,6 +145,7 @@ void xdnn_hgemm_f16f16f32_compute(bool transA, int M, int N, int K,
 void xdnn_hgemm_f16f16f32_compute_silu(bool transA, int M, int N, int K,
                                       float alpha, const XDNN_FP16 *A, int lda, const XDNN_FP16 *packedB,
                                       float beta, float *C, int ldc) {
+    DEBUG_PRINT();
     // Compute regular HGEMM
     xdnn_hgemm_f16f16f32_compute(transA, M, N, K, alpha, A, lda, packedB, beta, C, ldc);
     
@@ -154,6 +161,7 @@ void xdnn_hgemm_f16f16f32_compute_silu(bool transA, int M, int N, int K,
 void xdnn_hgemm_f16f16f32_compute_gelu(bool transA, int M, int N, int K,
                                       float alpha, const XDNN_FP16 *A, int lda, const XDNN_FP16 *packedB,
                                       float beta, float *C, int ldc) {
+    DEBUG_PRINT();
     // Compute regular HGEMM
     xdnn_hgemm_f16f16f32_compute(transA, M, N, K, alpha, A, lda, packedB, beta, C, ldc);
     
@@ -170,6 +178,7 @@ void xdnn_hgemm_f16f16f32_compute_resext(bool transA, int M, int N, int K,
                                         float alpha, const XDNN_FP16 *A, int lda, const XDNN_FP16 *packedB,
                                         float beta, float *C, int ldc, const float *bias,
                                         float gamma, const float *res, int ldres) {
+    DEBUG_PRINT();
     // Compute regular HGEMM
     xdnn_hgemm_f16f16f32_compute(transA, M, N, K, alpha, A, lda, packedB, beta, C, ldc);
     
@@ -185,6 +194,7 @@ void xdnn_hgemm_f16f16f32_compute_resext(bool transA, int M, int N, int K,
 void xdnn_hgemm_f16f16f32_compute_resmul(bool transA, int M, int N, int K,
                                         float alpha, const XDNN_FP16 *A, int lda, const XDNN_FP16 *packedB,
                                         float beta, float *C, int ldc, const float *res, int ldres) {
+    DEBUG_PRINT();
     // Compute regular HGEMM
     xdnn_hgemm_f16f16f32_compute(transA, M, N, K, alpha, A, lda, packedB, beta, C, ldc);
     
@@ -200,6 +210,7 @@ void xdnn_hgemm_f16f16f32_compute_resmul(bool transA, int M, int N, int K,
 void xdnn_hgemm_f16f16f32_compute_biasadd(bool transA, int M, int N, int K,
                                          float alpha, const XDNN_FP16 *A, int lda, const XDNN_FP16 *packedB,
                                          float beta, float *C, int ldc, const float *bias) {
+    DEBUG_PRINT();
     // Compute regular HGEMM
     xdnn_hgemm_f16f16f32_compute(transA, M, N, K, alpha, A, lda, packedB, beta, C, ldc);
     
@@ -215,6 +226,7 @@ void xdnn_hgemm_f16f16f32_compute_biasadd(bool transA, int M, int N, int K,
 void xdnn_hgemm_f16f16f32_compute_biasadd_relu(bool transA, int M, int N, int K,
                                               float alpha, const XDNN_FP16 *A, int lda, const XDNN_FP16 *packedB,
                                               float beta, float *C, int ldc, const float *bias) {
+    DEBUG_PRINT();
     // Compute regular HGEMM with bias addition
     xdnn_hgemm_f16f16f32_compute_biasadd(transA, M, N, K, alpha, A, lda, packedB, beta, C, ldc, bias);
     
@@ -230,6 +242,7 @@ void xdnn_hgemm_f16f16f32_compute_biasadd_relu(bool transA, int M, int N, int K,
 void xdnn_hgemm_f16f16f32_compute_residential(bool transA, int M, int N, int K,
                                              float alpha, const XDNN_FP16 *A, int lda, const XDNN_FP16 *packedB,
                                              float beta, float *C, int ldc, const float *bias, const float *res, int ldres) {
+    DEBUG_PRINT();
     // Compute regular HGEMM with bias addition
     xdnn_hgemm_f16f16f32_compute_biasadd(transA, M, N, K, alpha, A, lda, packedB, beta, C, ldc, bias);
     
@@ -243,6 +256,7 @@ void xdnn_hgemm_f16f16f32_compute_residential(bool transA, int M, int N, int K,
 
 // Small HGEMM implementation for single-threaded special cases
 void small_hgemm_f16f16f32(int M, int N, int K, const XDNN_FP16 *A, int lda, const XDNN_FP16 *B, int ldb, float *C, int ldc) {
+    DEBUG_PRINT();
     // Simple implementation optimized for small matrices
     for (int i = 0; i < M; i++) {
         for (int j = 0; j < N; j++) {

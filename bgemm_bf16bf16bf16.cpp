@@ -1,5 +1,6 @@
 #include "bgemm_bf16bf16bf16.h"
 #include "data_types/data_types.h"
+#include "debug_print.h"
 #include <vector>
 #include <cmath>
 #include <thread>
@@ -15,27 +16,32 @@ constexpr int BLOCK_K = 64;
 
 // Helper: SiLU activation function
 inline float silu(float x) {
+    DEBUG_PRINT();
     return x / (1.0f + std::exp(-x));
 }
 
 // Helper: GELU activation function
 inline float gelu(float x) {
+    DEBUG_PRINT();
     return 0.5f * x * (1.0f + std::tanh(std::sqrt(2.0f / M_PI) * (x + 0.044715f * std::pow(x, 3.0f))));
 }
 
 // Helper: ReLU activation function
 inline float relu(float x) {
+    DEBUG_PRINT();
     return std::max(0.0f, x);
 }
 
 // Helper: Convert XDNN_BF16 to float
 inline float bf16_to_float(XDNN_BF16 val) {
+    DEBUG_PRINT();
     union { uint32_t u; float f; } u = { static_cast<uint32_t>(val) << 16 };
     return u.f;
 }
 
 // Helper: Convert float to XDNN_BF16 (truncate lower 16 bits)
 inline XDNN_BF16 float_to_bf16(float val) {
+    DEBUG_PRINT();
     union { float f; uint32_t u; } u = { val };
     return static_cast<XDNN_BF16>(u.u >> 16);
 }

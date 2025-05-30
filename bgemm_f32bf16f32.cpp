@@ -1,4 +1,5 @@
 #include "bgemm_f32bf16f32.h"
+#include "debug_print.h"
 #include <vector>
 #include <cmath>
 #include <thread>
@@ -14,45 +15,59 @@ constexpr int BLOCK_K = 64;
 
 // Helper: SiLU activation function
 inline float silu(float x) {
+    DEBUG_PRINT();
     return x / (1.0f + std::exp(-x));
 }
 
 // Helper: GELU activation function
 inline float gelu(float x) {
+    DEBUG_PRINT();
     return 0.5f * x * (1.0f + std::tanh(std::sqrt(2.0f / M_PI) * (x + 0.044715f * std::pow(x, 3.0f))));
 }
 
 // Helper: ReLU activation function
 inline float relu(float x) {
+    DEBUG_PRINT();
     return std::max(0.0f, x);
 }
 
 // To pack matrix B (row-major KxN output)
 void xdnn_bgemm_f32bf16f32_packb(bool transB, int N, int K, const XDNN_BF16* B, int ldb, XDNN_BF16* packedB, int block_rows, int block_cols) {
-    // Blocked packing: pack B in tiles of block_rows x block_cols
-    int packed_offset = 0;
-    for (int kb = 0; kb < K; kb += block_rows) {
-        int kb_size = std::min(block_rows, K - kb);
-        for (int nb = 0; nb < N; nb += block_cols) {
-            int nb_size = std::min(block_cols, N - nb);
-            for (int k = 0; k < kb_size; ++k) {
-                for (int n = 0; n < nb_size; ++n) {
-                    int src_k = kb + k;
-                    int src_n = nb + n;
-                    int src_idx = transB ? (src_n * ldb + src_k) : (src_k * ldb + src_n);
-                    packedB[packed_offset++] = B[src_idx];
-                }
-                // Pad remaining columns in this block row if needed
-                for (int n = nb_size; n < block_cols; ++n) {
-                    packedB[packed_offset++] = 0;
-                }
-            }
-            // Pad remaining rows in this block if needed
-            for (int k = kb_size; k < block_rows; ++k) {
-                for (int n = 0; n < block_cols; ++n) {
-                    packedB[packed_offset++] = 0;
-                }
-            }
+    DEBUG_PRINT();
+    // DEBUG_PRINT_PARAMS("transB = %d, N = %d, K = %d, ldb = %d, block_rows = %d, block_cols = %d\n", transB, N, K, ldb, block_rows, block_cols);
+    int rowsB = transB ? N : K;
+    int colsB = transB ? K : N;
+    int idx = 0;
+    int packed_idx = 0;
+    int packed_row_per_block = 0;
+    if ((rowsB / 2) > block_rows) {
+        packed_row_per_block = rowsB / 2;
+    }
+    else {
+        packed_row_per_block = block_rows;
+    }
+    int packed_cols = block_cols * 2;
+    int packed_rows_per_rowB = colsB / block_cols;
+
+    for (int row = 0; row < rowsB; ++ row) {
+        for (int col = 0; col < colsB; ++ col) {
+            idx = row * ldb + col;
+            int pos_in_packed_row = 2 * (idx % block_cols) + (idx / colsB) % 2;
+            int block_per_rowB = (idx % colsB) / block_cols;
+            int packed_row_block_offset = block_per_rowB * packed_row_per_block;
+            int packed_row_offset_in_block = idx / (colsB * 2);
+            packed_idx = pos_in_packed_row + (packed_row_block_offset + packed_row_offset_in_block) * block_cols * 2;
+            packedB[packed_idx] = B[idx];
+            // std::cout << idx << " " << packed_idx << std::endl;
+            // if (idx == 4352) {
+            //     std::cout << "packed_row_per_block = " << packed_row_per_block << std::endl;
+            //     std::cout << "packed_cols = " << packed_cols << std::endl;
+            //     std::cout << "packed_rows_per_rowB = " << packed_rows_per_rowB << std::endl;
+            //     std::cout << "pos_in_packed_row = " << pos_in_packed_row << std::endl;
+            //     std::cout << "block_per_rowB = " << block_per_rowB << std::endl;
+            //     std::cout << "packed_row_block_offset = " << packed_row_block_offset << std::endl;
+            //     std::cout << "packed_row_offset_in_block = " << packed_row_offset_in_block << std::endl;
+            // }
         }
     }
 }
@@ -61,6 +76,7 @@ void xdnn_bgemm_f32bf16f32_packb(bool transB, int N, int K, const XDNN_BF16* B, 
 void xdnn_bgemm_f32bf16f32_compute(bool transA, int M, int N, int K,
         float alpha, const float* A, int lda, const XDNN_BF16* packedB,
         float beta, float* C, int ldc) {
+    DEBUG_PRINT();
     for (int m = 0; m < M; ++m) {
         for (int n = 0; n < N; ++n) {
             float sum = 0.0f;
@@ -82,6 +98,7 @@ void xdnn_bgemm_f32bf16f32_compute(bool transA, int M, int N, int K,
 void xdnn_bgemm_f32bf16f32_compute_silu(bool transA, int M, int N, int K,
         float alpha, const float* A, int lda, const XDNN_BF16* packedB,
         float beta, float* C, int ldc) {
+    DEBUG_PRINT();
     for (int m = 0; m < M; ++m) {
         for (int n = 0; n < N; ++n) {
             float sum = 0.0f;
@@ -104,6 +121,7 @@ void xdnn_bgemm_f32bf16f32_compute_silu(bool transA, int M, int N, int K,
 void xdnn_bgemm_f32bf16f32_compute_gelu(bool transA, int M, int N, int K,
         float alpha, const float* A, int lda, const XDNN_BF16* packedB,
         float beta, float* C, int ldc) {
+    DEBUG_PRINT();
     for (int m = 0; m < M; ++m) {
         for (int n = 0; n < N; ++n) {
             float sum = 0.0f;
@@ -126,6 +144,7 @@ void xdnn_bgemm_f32bf16f32_compute_gelu(bool transA, int M, int N, int K,
 void xdnn_bgemm_f32bf16f32_compute_biasadd(bool transA, int M, int N, int K,
         float alpha, const float* A, int lda, const XDNN_BF16* packedB,
         float beta, float* C, int ldc, const float* bias) {
+    DEBUG_PRINT();
     for (int m = 0; m < M; ++m) {
         for (int n = 0; n < N; ++n) {
             float sum = 0.0f;
@@ -146,6 +165,7 @@ void xdnn_bgemm_f32bf16f32_compute_biasadd(bool transA, int M, int N, int K,
 void xdnn_bgemm_f32bf16f32_compute_biasadd_relu(bool transA, int M, int N, int K,
         float alpha, const float* A, int lda, const XDNN_BF16* packedB,
         float beta, float* C, int ldc, const float* bias) {
+    DEBUG_PRINT();
     for (int m = 0; m < M; ++m) {
         for (int n = 0; n < N; ++n) {
             float sum = 0.0f;
@@ -168,6 +188,7 @@ void xdnn_bgemm_f32bf16f32_compute_biasadd_relu(bool transA, int M, int N, int K
 void xdnn_bgemm_f32bf16f32_compute_residential(bool transA, int M, int N, int K,
         float alpha, const float* A, int lda, const XDNN_BF16* packedB,
         float beta, float* C, int ldc, const float* bias, const float* res, int ldres) {
+    DEBUG_PRINT();
     for (int m = 0; m < M; ++m) {
         for (int n = 0; n < N; ++n) {
             float sum = 0.0f;
@@ -189,6 +210,7 @@ void xdnn_bgemm_f32bf16f32_compute_resext(bool transA, int M, int N, int K,
         float alpha, const float* A, int lda, const XDNN_BF16* packedB,
         float beta, float* C, int ldc, const float* bias, 
         float gamma, const float* res, int ldres) {
+    DEBUG_PRINT();
     for (int m = 0; m < M; ++m) {
         for (int n = 0; n < N; ++n) {
             float sum = 0.0f;
@@ -209,6 +231,7 @@ void xdnn_bgemm_f32bf16f32_compute_resext(bool transA, int M, int N, int K,
 void xdnn_bgemm_f32bf16f32_compute_resmul(bool transA, int M, int N, int K,
         float alpha, const float* A, int lda, const XDNN_BF16* packedB,
         float beta, float* C, int ldc, const float* res, int ldres) {
+    DEBUG_PRINT();
     for (int m = 0; m < M; ++m) {
         for (int n = 0; n < N; ++n) {
             float sum = 0.0f;
@@ -229,6 +252,7 @@ void xdnn_bgemm_f32bf16f32_compute_resmul(bool transA, int M, int N, int K,
 
 // Single-thread small BGEMM
 void small_bgemm_f32bf16f32(int M, int N, int K, const float* A, int lda, const XDNN_BF16* B, int ldb, float* C, int ldc) {
+    DEBUG_PRINT();
     for (int m = 0; m < M; ++m) {
         for (int n = 0; n < N; ++n) {
             float sum = 0.0f;
@@ -246,6 +270,7 @@ void small_bgemm_f32bf16f32(int M, int N, int K, const float* A, int lda, const 
 static void compute_block(bool transA, int m_start, int m_end, int N, int K,
                   float alpha, const float* A, int lda, const XDNN_BF16* packedB,
                   float beta, float* C, int ldc) {
+    DEBUG_PRINT();
     for (int m = m_start; m < m_end; ++m) {
         for (int n = 0; n < N; ++n) {
             float sum = 0.0f;
@@ -268,6 +293,7 @@ void xdnn_bgemm_f32bf16f32(bool transA, bool transB, int M, int N, int K,
        float alpha, const float* A, int lda, const XDNN_BF16* B, int ldb,
        float beta, float* C, int ldc) {
     
+    DEBUG_PRINT();
     // Create temporary storage for packed B matrix
     std::vector<XDNN_BF16> packedB(K * N);
     
@@ -299,6 +325,7 @@ void xdnn_bgemm_f32bf16f32_single_thread(bool transA, bool transB, int M, int N,
        float alpha, const float* A, int lda, const XDNN_BF16* B, int ldb,
        float beta, float* C, int ldc) {
     
+    DEBUG_PRINT();
     // Pack B matrix with block-wise packing
     std::vector<XDNN_BF16> packedB(K * N);
     xdnn_bgemm_f32bf16f32_packb(transB, N, K, B, ldb, packedB.data(), BLOCK_K, BLOCK_N);

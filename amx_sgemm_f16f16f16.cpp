@@ -1,6 +1,7 @@
 #include "conversion.h"
 #include "amx_sgemm_f16f16f16.h"
 #include "intrinsic_ext.h"
+#include "debug_print.h"
 #include <cstring>
 #include <immintrin.h>
 #include <algorithm>
@@ -8,6 +9,7 @@
 // AMX SGEMM operations for FP16 data types
 
 int xdnn_small_amx_sgemm_f16f16f16_packb_size(int N, int K, int block_rows, int block_cols) {
+    DEBUG_PRINT();
     // Calculate required size for packing including alignment padding
     // Each block is stored contiguously for better memory access patterns
     int num_blocks = (N + block_cols - 1) / block_cols * (K + block_rows - 1) / block_rows;
@@ -16,6 +18,7 @@ int xdnn_small_amx_sgemm_f16f16f16_packb_size(int N, int K, int block_rows, int 
 
 void xdnn_small_amx_sgemm_f16f16f16_packb(bool transB, int N, int K, const XDNN_FP16 *B, int stride, XDNN_FP16 *packedB,
                                           int size) {
+    DEBUG_PRINT();
     // Define tile size for AMX operations
     const int amx_tile_rows = 16;
     const int amx_tile_cols = 16;
@@ -78,6 +81,7 @@ void xdnn_small_amx_sgemm_f16f16f16_packb(bool transB, int N, int K, const XDNN_
 // AMX optimized GEMM computation for FP16 input and output
 void xdnn_small_amx_sgemm_f16f16f16_compute(int M, int N, int K, const XDNN_FP16 *A, int lda, const XDNN_FP16 *packedB,
                                             int ldb, XDNN_FP16 *C, int ldc, float beta) {
+    DEBUG_PRINT();
     // AMX tile parameters for optimized computation
     const int TILE_M = 16;  // AMX tile rows
     const int TILE_N = 16;  // AMX tile columns

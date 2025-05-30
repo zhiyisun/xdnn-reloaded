@@ -1,6 +1,7 @@
 #include "conversion.h"
 #include "amx_sgemm_bf16f8bf16.h"
 #include "intrinsic_ext.h"
+#include "debug_print.h"
 #include <cstring>
 #include <immintrin.h>
 #include <algorithm>
@@ -24,6 +25,7 @@ inline float _xdnn_fp8_to_float(const XDNN_E4M3& fp8) {
 
 // Pack size calculation for AMX-optimized operations
 int xdnn_small_amx_sgemm_bf16f8bf16_packb_size(int N, int K, int pack_size) {
+    DEBUG_PRINT();
     int n_blocks = (N + pack_size - 1) / pack_size;
     int k_blocks = (K + pack_size - 1) / pack_size;
     return n_blocks * k_blocks * pack_size * pack_size * sizeof(XDNN_E4M3);
@@ -32,6 +34,7 @@ int xdnn_small_amx_sgemm_bf16f8bf16_packb_size(int N, int K, int pack_size) {
 // Pack matrix B for efficient AMX execution
 void xdnn_small_amx_sgemm_bf16f8bf16_packb(
         bool transB, int N, int K, const XDNN_E4M3 *B, int ldb, XDNN_E4M3 *packedB, int pack_size) {
+    DEBUG_PRINT();
     int n_blocks = (N + pack_size - 1) / pack_size;
     int k_blocks = (K + pack_size - 1) / pack_size;
     for (int k = 0; k < K; k += pack_size) {
@@ -66,6 +69,7 @@ void xdnn_small_amx_sgemm_bf16f8bf16_packb(
 void xdnn_small_amx_sgemm_bf16f8bf16_compute_single(int M, int N, int K, const XDNN_BF16 *A, int lda,
         const XDNN_E4M3 *packedB, XDNN_BF16 *C, int ldc, const float *scaleB, int lds, int blockSize, float alpha,
         float beta, const float *bias) {
+    DEBUG_PRINT();
     const int AMX_TILE_M = 16;
     const int AMX_TILE_N = 16;
     const int AMX_TILE_K = 32;
@@ -124,7 +128,7 @@ void xdnn_small_amx_sgemm_bf16f8bf16_compute_single(int M, int N, int K, const X
 // Multi-threaded implementation of BF16/FP8 SGEMM
 void xdnn_small_amx_sgemm_bf16f8bf16_compute(int M, int N, int K, const XDNN_BF16 *A, int lda, const XDNN_E4M3 *packedB,
         XDNN_BF16 *C, int ldc, const float *scaleB, int lds, int blockSize, float alpha, float beta, const float *bias) {
-    
+    DEBUG_PRINT();
     // Use single-threaded implementation for small matrices
     if (M * N < 4096) {
         xdnn_small_amx_sgemm_bf16f8bf16_compute_single(
@@ -224,7 +228,7 @@ void xdnn_small_amx_sgemm_bf16f8bf16_compute(int M, int N, int K, const XDNN_BF1
 void xdnn_small_amx_sgemm_bf16f8bf16_compute_batch_C(int M, int N, int K, const XDNN_BF16 *A, int lda,
         const XDNN_E4M3 *packedBBatch[], XDNN_BF16 *CBatch[], const int *ldcb, const float *scaleBBatch[],
         const int *scaleB_lda, int blockSize, const float *alphaBatch, int packedBBatchSize) {
-    
+    DEBUG_PRINT();
     // Process each batch independently
     for (int b = 0; b < packedBBatchSize; b++) {
         xdnn_small_amx_sgemm_bf16f8bf16_compute(
@@ -237,7 +241,7 @@ void xdnn_small_amx_sgemm_bf16f8bf16_compute_batch_C(int M, int N, int K, const 
 void xdnn_small_amx_sgemm_bf16f8bf16_compute_batch_CM(int M, const int *NBatch, int K, const XDNN_BF16 *A, int lda,
         const XDNN_E4M3 *packedBBatch[], XDNN_BF16 *CBatch[], const int *ldcb, const float *scaleBBatch[],
         const int *scaleB_lda, int blockSize, const float *alphaBatch, int packedBBatchSize) {
-    
+    DEBUG_PRINT();
     // Process each batch with variable column dimensions
     for (int b = 0; b < packedBBatchSize; b++) {
         xdnn_small_amx_sgemm_bf16f8bf16_compute(
@@ -250,7 +254,7 @@ void xdnn_small_amx_sgemm_bf16f8bf16_compute_batch_CM(int M, const int *NBatch, 
 void xdnn_small_amx_sgemm_bf16f8bf16_compute_batch_A(int M, int N, int K, const XDNN_BF16 *ABatch[], const int *ldab,
         const XDNN_E4M3 *packedBBatch[], XDNN_BF16 *C, int ldc, const float *scaleBBatch[], const int *scaleB_lda,
         int blockSize, const float *alphaBatch, int packedBBatchSize) {
-    
+    DEBUG_PRINT();
     // Zero initialize output
     for (int m = 0; m < M; m++) {
         memset(&C[m * ldc], 0, N * sizeof(XDNN_BF16));
@@ -281,7 +285,7 @@ void xdnn_small_amx_sgemm_bf16f8bf16_compute_batch_A(int M, int N, int K, const 
 void xdnn_small_amx_sgemm_bf16f8bf16_compute_batch_AM(int M, int N, const int *KBatch, const XDNN_BF16 *ABatch[],
         const int *ldab, const XDNN_E4M3 *packedBBatch[], XDNN_BF16 *C, int ldc, const float *scaleBBatch[],
         const int *scaleB_lda, int blockSize, const float *alphaBatch, int packedBBatchSize) {
-    
+    DEBUG_PRINT();
     // Zero initialize output
     for (int m = 0; m < M; m++) {
         memset(&C[m * ldc], 0, N * sizeof(XDNN_BF16));
@@ -312,7 +316,7 @@ void xdnn_small_amx_sgemm_bf16f8bf16_compute_batch_AM(int M, int N, const int *K
 void xdnn_small_amx_sgemm_bf16f8bf16_compute_residential(int M, int N, int K, const XDNN_BF16 *A, int lda,
         const XDNN_E4M3 *packedB, XDNN_BF16 *C, int ldc, const float *scaleB, int lds, int blockSize, float alpha,
         float beta, const float *bias, const XDNN_BF16 *res, int ldres) {
-    
+    DEBUG_PRINT();
     // First compute standard matrix multiplication
     xdnn_small_amx_sgemm_bf16f8bf16_compute(
         M, N, K, A, lda, packedB, C, ldc, scaleB, lds, blockSize, alpha, beta, bias);
@@ -332,7 +336,7 @@ void xdnn_small_amx_sgemm_bf16f8bf16_compute_residential_batch_C(int M, int N, i
         const XDNN_E4M3 *packedBBatch[], XDNN_BF16 *CBatch[], const int *ldcb, const float *scaleBBatch[],
         const int *scaleB_lda, int blockSize, const float *alphaBatch, int packedBBatchSize,
         const XDNN_BF16 *resBatch[], const int *ldresb) {
-    
+    DEBUG_PRINT();
     // Process each batch with residual connections
     for (int b = 0; b < packedBBatchSize; b++) {
         // First compute standard matrix multiplication
@@ -356,7 +360,7 @@ void xdnn_small_amx_sgemm_bf16f8bf16_compute_residential_batch_CM(int M, const i
         int lda, const XDNN_E4M3 *packedBBatch[], XDNN_BF16 *CBatch[], const int *ldcb, const float *scaleBBatch[],
         const int *scaleB_lda, int blockSize, const float *alphaBatch, int packedBBatchSize,
         const XDNN_BF16 *resBatch[], const int *ldresb) {
-    
+    DEBUG_PRINT();
     // Process each batch with variable columns and residual connections
     for (int b = 0; b < packedBBatchSize; b++) {
         // First compute standard matrix multiplication with variable N
@@ -380,7 +384,7 @@ void xdnn_small_amx_sgemm_bf16f8bf16_compute_residential_batch_A(int M, int N, i
         const int *ldab, const XDNN_E4M3 *packedBBatch[], XDNN_BF16 *C, int ldc, const float *scaleBBatch[],
         const int *scaleB_lda, int blockSize, const float *alphaBatch, int packedBBatchSize, const XDNN_BF16 *res,
         int ldres) {
-    
+    DEBUG_PRINT();
     // First compute the batch sum matrix multiplication
     xdnn_small_amx_sgemm_bf16f8bf16_compute_batch_A(
         M, N, K, ABatch, ldab, packedBBatch, C, ldc,
@@ -401,7 +405,7 @@ void xdnn_small_amx_sgemm_bf16f8bf16_compute_residential_batch_AM(int M, int N, 
         const XDNN_BF16 *ABatch[], const int *ldab, const XDNN_E4M3 *packedBBatch[], XDNN_BF16 *C, int ldc,
         const float *scaleBBatch[], const int *scaleB_lda, int blockSize, const float *alphaBatch, int packedBBatchSize,
         const XDNN_BF16 *res, int ldres) {
-    
+    DEBUG_PRINT();
     // First compute the batch sum matrix multiplication with variable K
     xdnn_small_amx_sgemm_bf16f8bf16_compute_batch_AM(
         M, N, KBatch, ABatch, ldab, packedBBatch, C, ldc,

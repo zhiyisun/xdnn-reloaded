@@ -1,5 +1,6 @@
 #include "conversion.h"
 #include "sgemm.h"
+#include "debug_print.h"
 #include <cstring>
 #include <algorithm>
 #include <immintrin.h>
@@ -7,10 +8,12 @@
 
 // Helper functions for activation
 inline float silu(float x) {
+    DEBUG_PRINT();
     return x / (1.0f + std::exp(-x));
 }
 
 inline float gelu(float x) {
+    DEBUG_PRINT();
     // GELU approximation
     return 0.5f * x * (1.0f + std::tanh(std::sqrt(2.0f / M_PI) * (x + 0.044715f * x * x * x)));
 }
@@ -19,6 +22,7 @@ inline float gelu(float x) {
 void xdnn_sgemm(bool transA, bool transB, int M, int N, int K,
                 float alpha, const float *A, int lda, const float *B, int ldb,
                 float beta, float *C, int ldc) {
+    DEBUG_PRINT();
     // Multi-threaded implementation would typically use OpenMP or similar
     // For simplicity, we'll call the single-threaded version here
     xdnn_sgemm_single_thread(transA, transB, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
@@ -28,6 +32,7 @@ void xdnn_sgemm(bool transA, bool transB, int M, int N, int K,
 void xdnn_sgemm_single_thread(bool transA, bool transB, int M, int N, int K,
                               float alpha, const float *A, int lda, const float *B, int ldb,
                               float beta, float *C, int ldc) {
+    DEBUG_PRINT();
     // Simple triple-loop matrix multiplication
     // This naive implementation would be much more optimized in production code
     
@@ -88,6 +93,7 @@ void xdnn_sgemm_single_thread(bool transA, bool transB, int M, int N, int K,
 
 // Pack matrix B for optimized computation
 void xdnn_sgemm_packb(bool transB, int N, int K, const float *B, int ldb, float *packedB) {
+    DEBUG_PRINT();
     // Packing B for better cache locality in subsequent computations
     // The exact packing format depends on the target architecture and SIMD width
     
@@ -112,6 +118,7 @@ void xdnn_sgemm_packb(bool transB, int N, int K, const float *B, int ldb, float 
 void xdnn_sgemm_compute(bool transA, int M, int N, int K,
                         float alpha, const float *A, int lda, const float *packedB,
                         float beta, float *C, int ldc) {
+    DEBUG_PRINT();
     // Apply beta scaling to C
     if (beta != 1.0f) {
         for (int i = 0; i < M; i++) {
@@ -150,6 +157,7 @@ void xdnn_sgemm_compute(bool transA, int M, int N, int K,
 void xdnn_sgemm_compute_silu(bool transA, int M, int N, int K,
                              float alpha, const float *A, int lda, const float *packedB,
                              float beta, float *C, int ldc) {
+    DEBUG_PRINT();
     // Compute regular SGEMM
     xdnn_sgemm_compute(transA, M, N, K, alpha, A, lda, packedB, beta, C, ldc);
     
@@ -165,6 +173,7 @@ void xdnn_sgemm_compute_silu(bool transA, int M, int N, int K,
 void xdnn_sgemm_compute_gelu(bool transA, int M, int N, int K,
                              float alpha, const float *A, int lda, const float *packedB,
                              float beta, float *C, int ldc) {
+    DEBUG_PRINT();
     // Compute regular SGEMM
     xdnn_sgemm_compute(transA, M, N, K, alpha, A, lda, packedB, beta, C, ldc);
     
@@ -180,6 +189,7 @@ void xdnn_sgemm_compute_gelu(bool transA, int M, int N, int K,
 void xdnn_sgemm_compute_biasadd(bool transA, int M, int N, int K,
                                float alpha, const float *A, int lda, const float *packedB,
                                float beta, float *C, int ldc, const float *bias) {
+    DEBUG_PRINT();
     // Compute regular SGEMM
     xdnn_sgemm_compute(transA, M, N, K, alpha, A, lda, packedB, beta, C, ldc);
     
@@ -195,6 +205,7 @@ void xdnn_sgemm_compute_biasadd(bool transA, int M, int N, int K,
 void xdnn_sgemm_compute_biasadd_relu(bool transA, int M, int N, int K,
                                      float alpha, const float *A, int lda, const float *packedB,
                                      float beta, float *C, int ldc, const float *bias) {
+    DEBUG_PRINT();
     // Compute regular SGEMM with bias
     xdnn_sgemm_compute_biasadd(transA, M, N, K, alpha, A, lda, packedB, beta, C, ldc, bias);
     
@@ -210,6 +221,7 @@ void xdnn_sgemm_compute_biasadd_relu(bool transA, int M, int N, int K,
 void xdnn_sgemm_compute_residential(bool transA, int M, int N, int K,
                                     float alpha, const float *A, int lda, const float *packedB,
                                     float beta, float *C, int ldc, const float *bias, const float *res, int ldres) {
+    DEBUG_PRINT();
     // Compute regular SGEMM with bias
     xdnn_sgemm_compute_biasadd(transA, M, N, K, alpha, A, lda, packedB, beta, C, ldc, bias);
     
@@ -225,6 +237,7 @@ void xdnn_sgemm_compute_residential(bool transA, int M, int N, int K,
 void xdnn_sgemm_compute_resext(bool transA, int M, int N, int K,
                                    float alpha, const float *A, int lda, const float *packedB,
                                    float beta, float *C, int ldc, const float *bias, float gamma, const float *res, int ldres) {
+    DEBUG_PRINT();
     // Compute regular SGEMM with bias
     xdnn_sgemm_compute_biasadd(transA, M, N, K, alpha, A, lda, packedB, beta, C, ldc, bias);
     
@@ -240,6 +253,7 @@ void xdnn_sgemm_compute_resext(bool transA, int M, int N, int K,
 void xdnn_sgemm_compute_resmul(bool transA, int M, int N, int K,
                                    float alpha, const float *A, int lda, const float *packedB,
                                    float beta, float *C, int ldc, const float *res, int ldres) {
+    DEBUG_PRINT();
     // Compute regular SGEMM
     xdnn_sgemm_compute(transA, M, N, K, alpha, A, lda, packedB, beta, C, ldc);
     

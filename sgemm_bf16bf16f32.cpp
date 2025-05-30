@@ -1,10 +1,12 @@
 #include "sgemm_bf16bf16f32.h"
 #include "intrinsic_ext.h"
+#include "debug_print.h"
 #include <immintrin.h>
 #include <cstring>
 
 // Helper function: AVX horizontal sum (reduction)
 float _mm256_reduce_add_ps(__m256 x) {
+    DEBUG_PRINT();
     /* ( x3+x7, x2+x6, x1+x5, x0+x4 ) */
     __m128 high128 = _mm256_extractf128_ps(x, 1);
     __m128 low128 = _mm256_castps256_ps128(x);
@@ -34,6 +36,7 @@ void small_sgemm_bf16bf16f32(bool transB, int M, int N, int K,
                             const XDNN_BF16 *A, int lda, 
                             const XDNN_BF16 *B, int ldb, 
                             float *C, int ldc) {
+    DEBUG_PRINT();
     // Verify constraints from header comment
     if (M != 1 || !transB) {
         // In production code, we might want to handle this error differently
@@ -103,6 +106,7 @@ void small_sgemm_bf16bf16f32_b(bool transB, int M, int N, int K,
                               const XDNN_BF16 *B, int ldb, 
                               float *C, int ldc, 
                               int *blockIndices, int blockStride, int blockSize) {
+    DEBUG_PRINT();
     // Verify constraints from header comment
     if (M != 1 || !transB) {
         // In production code, we might want to handle this error differently
