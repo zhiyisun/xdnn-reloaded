@@ -35,39 +35,40 @@ inline float relu(float x) {
 void xdnn_bgemm_f32bf16f32_packb(bool transB, int N, int K, const XDNN_BF16* B, int ldb, XDNN_BF16* packedB, int block_rows, int block_cols) {
     DEBUG_PRINT();
     // DEBUG_PRINT_PARAMS("transB = %d, N = %d, K = %d, ldb = %d, block_rows = %d, block_cols = %d\n", transB, N, K, ldb, block_rows, block_cols);
-    int rowsB = transB ? N : K;
-    int colsB = transB ? K : N;
+    std::vector<XDNN_BF16> B_buf;
+    const XDNN_BF16* B_used = B;
+    if (transB) {
+        // Transpose B (original shape KxN, ldb)
+        B_buf.resize(K * N, 0);
+        for (int r = 0; r < N; ++r) {
+            for (int c = 0; c < K; ++c) {
+                B_buf[c * N + r] = B[r * K + c];
+            }
+        }
+        B_used = B_buf.data();
+    }
     int idx = 0;
     int packed_idx = 0;
     int packed_row_per_block = 0;
-    if ((rowsB / 2) > block_rows) {
-        packed_row_per_block = rowsB / 2;
+    if ((K / 2) > block_rows) {
+        packed_row_per_block = K / 2;
     }
     else {
         packed_row_per_block = block_rows;
     }
-    int packed_cols = block_cols * 2;
-    int packed_rows_per_rowB = colsB / block_cols;
 
-    for (int row = 0; row < rowsB; ++ row) {
-        for (int col = 0; col < colsB; ++ col) {
-            idx = row * ldb + col;
-            int pos_in_packed_row = 2 * (idx % block_cols) + (idx / colsB) % 2;
-            int block_per_rowB = (idx % colsB) / block_cols;
+    int packed_cols = block_cols * 2;
+    int packed_rows_per_rowB = N / block_cols;
+
+    for (int row = 0; row < K; ++ row) {
+        for (int col = 0; col < N; ++ col) {
+            idx = row * N + col;
+            int pos_in_packed_row = 2 * (idx % block_cols) + (idx / N) % 2;
+            int block_per_rowB = (idx % N) / block_cols;
             int packed_row_block_offset = block_per_rowB * packed_row_per_block;
-            int packed_row_offset_in_block = idx / (colsB * 2);
+            int packed_row_offset_in_block = idx / (N * 2);
             packed_idx = pos_in_packed_row + (packed_row_block_offset + packed_row_offset_in_block) * block_cols * 2;
-            packedB[packed_idx] = B[idx];
-            // std::cout << idx << " " << packed_idx << std::endl;
-            // if (idx == 4352) {
-            //     std::cout << "packed_row_per_block = " << packed_row_per_block << std::endl;
-            //     std::cout << "packed_cols = " << packed_cols << std::endl;
-            //     std::cout << "packed_rows_per_rowB = " << packed_rows_per_rowB << std::endl;
-            //     std::cout << "pos_in_packed_row = " << pos_in_packed_row << std::endl;
-            //     std::cout << "block_per_rowB = " << block_per_rowB << std::endl;
-            //     std::cout << "packed_row_block_offset = " << packed_row_block_offset << std::endl;
-            //     std::cout << "packed_row_offset_in_block = " << packed_row_offset_in_block << std::endl;
-            // }
+            packedB[packed_idx] = B_used[idx];
         }
     }
 }
