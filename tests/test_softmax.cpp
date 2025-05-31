@@ -6,6 +6,7 @@
 #include <vector>
 #include <numeric>
 #include <cmath>
+#include <cstdlib> // For std::rand and std::srand
 #include <algorithm> // For std::transform with XDNN_BF16 if needed, and std::max_element
 
 // Helper function for golden softmax calculation (float)
@@ -147,6 +148,43 @@ TEST_F(SoftmaxTest, SmallSoftmaxF32_ZeroScale) {
     }
 }
 
+TEST_F(SoftmaxTest, SmallSoftmaxF32_RandomDataVariableSizes) {
+    float scale = 0.088388f;
+    
+    // Seed for reproducible random data
+    std::srand(42);
+    
+    for (int size = 1025; size <= 2047; ++size) {
+        // Generate random float data
+        std::vector<float> data_f32(size);
+        for (int i = 0; i < size; ++i) {
+            // Generate random values between -10.0 and 10.0
+            data_f32[i] = (static_cast<float>(std::rand()) / RAND_MAX) * 20.0f - 10.0f;
+        }
+        
+        // Calculate expected result using golden softmax
+        std::vector<float> expected_f32 = calculate_golden_softmax(data_f32, scale, size);
+        
+        // Run the f32 softmax function
+        std::vector<float> actual_data_f32 = data_f32;
+        small_softmax_f32(actual_data_f32.data(), scale, size);
+        
+        // Verify results
+        ASSERT_EQ(actual_data_f32.size(), expected_f32.size()) << "Size mismatch for size=" << size;
+        
+        for (int i = 0; i < size; ++i) {
+            EXPECT_NEAR(actual_data_f32[i], expected_f32[i], 1e-5f)
+                << "Mismatch at index " << i << " for size=" << size;
+        }
+        
+        // Verify that the sum is approximately 1.0 (basic softmax property)
+        float sum = 0.0f;
+        for (int i = 0; i < size; ++i) {
+            sum += actual_data_f32[i];
+        }
+        EXPECT_NEAR(sum, 1.0f, 1e-5f) << "Sum not close to 1.0 for size=" << size;
+    }
+}
 
 // Tests for small_softmax_bf16
 TEST_F(SoftmaxTest, SmallSoftmaxBf16_Basic) {
@@ -243,4 +281,48 @@ TEST_F(SoftmaxTest, SmallSoftmaxBf16_SingleValue) {
     ASSERT_EQ(size,1);
     EXPECT_NEAR(static_cast<float>(actual_data_bf16[0]), 1.0f, BF16_PRECISION_TOLERANCE);
     EXPECT_NEAR(static_cast<float>(actual_data_bf16[0]), expected_f32[0], BF16_PRECISION_TOLERANCE);
+}
+
+TEST_F(SoftmaxTest, SmallSoftmaxBf16_RandomDataVariableSizes) {
+    float scale = 0.088388f;
+    
+    // Seed for reproducible random data
+    std::srand(42);
+    
+    for (int size = 1; size <= 1024; ++size) {
+        // Generate random float data
+        std::vector<float> data_f32(size);
+        for (int i = 0; i < size; ++i) {
+            // Generate random values between -10.0 and 10.0
+            data_f32[i] = (static_cast<float>(std::rand()) / RAND_MAX) * 20.0f - 10.0f;
+        }
+        
+        // Convert to bf16
+        std::vector<XDNN_BF16> data_bf16(size);
+        for (int i = 0; i < size; ++i) {
+            data_bf16[i] = XDNN_BF16(data_f32[i]);
+        }
+        
+        // Calculate expected result using golden softmax
+        std::vector<float> expected_f32 = calculate_golden_softmax(data_f32, scale, size);
+        
+        // Run the bf16 softmax function
+        std::vector<XDNN_BF16> actual_data_bf16 = data_bf16;
+        small_softmax_bf16(actual_data_bf16.data(), scale, size);
+        
+        // Verify results
+        ASSERT_EQ(actual_data_bf16.size(), expected_f32.size()) << "Size mismatch for size=" << size;
+        
+        for (int i = 0; i < size; ++i) {
+            EXPECT_NEAR(static_cast<float>(actual_data_bf16[i]), expected_f32[i], BF16_PRECISION_TOLERANCE)
+                << "Mismatch at index " << i << " for size=" << size;
+        }
+        
+        // Verify that the sum is approximately 1.0 (basic softmax property)
+        float sum = 0.0f;
+        for (int i = 0; i < size; ++i) {
+            sum += static_cast<float>(actual_data_bf16[i]);
+        }
+        EXPECT_NEAR(sum, 1.0f, BF16_PRECISION_TOLERANCE) << "Sum not close to 1.0 for size=" << size;
+    }
 }
