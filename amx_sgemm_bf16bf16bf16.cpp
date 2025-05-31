@@ -17,6 +17,7 @@
 // AMX packing function for bfloat16 matrices
 int xdnn_small_amx_sgemm_bf16bf16bf16_packb_size(int N, int K, int block_rows, int block_cols) {
     DEBUG_PRINT();
+    DEBUG_PRINT_PARAMS("N = %d, K = %d, block_rows = %d, block_cols = %d\n", N, K, block_rows, block_cols);
     int n_blocks = (N + block_cols - 1) / block_cols;
     int k_blocks = (K + block_rows - 1) / block_rows;
     return n_blocks * k_blocks * block_rows * block_cols * sizeof(XDNN_BF16);
@@ -25,6 +26,7 @@ int xdnn_small_amx_sgemm_bf16bf16bf16_packb_size(int N, int K, int block_rows, i
 void xdnn_small_amx_sgemm_bf16bf16bf16_packb(
         bool transB, int N, int K, const XDNN_BF16 *B, int stride, XDNN_BF16 *packedB, int size) {
     DEBUG_PRINT();
+    DEBUG_PRINT_PARAMS("N = %d, K = %d, stride = %d, size = %d\n", N, K, stride, size);
     const int TILE_K = 16;
     const int TILE_N = 16;
     int n_blocks = (N + TILE_N - 1) / TILE_N;
@@ -91,6 +93,7 @@ void xdnn_small_amx_sgemm_bf16bf16bf16_packb(
 void xdnn_small_amx_sgemm_bf16bf16bf16_compute(int M, int N, int K, const XDNN_BF16 *A, int lda,
         const XDNN_BF16 *packedB, int ldb, XDNN_BF16 *C, int ldc, float beta) {
     DEBUG_PRINT();
+    DEBUG_PRINT_PARAMS("M = %d, N = %d, K = %d, lda = %d, ldb = %d, ldc = %d, beta = %f\n", M, N, K, lda, ldb, ldc, beta);
     // Call the implementation with alpha = 1.0
     xdnn_small_amx_sgemm_bf16bf16bf16_compute_BA16a64b2a(M, N, K, A, lda, packedB, C, ldc, 1.0f, beta);
 }
@@ -107,6 +110,7 @@ void xdnn_small_amx_sgemm_bf16bf16f32_compute(int M, int N, int K, const XDNN_BF
 void xdnn_small_amx_sgemm_bf16bf16bf16_compute_BA16a64b2a(int M, int N, int K, const XDNN_BF16 *A,
         int lda, const XDNN_BF16 *packedB, XDNN_BF16 *C, int ldc, float alpha, float beta) {
     DEBUG_PRINT();
+    DEBUG_PRINT_PARAMS("M = %d, N = %d, K = %d, lda = %d, ldc = %d, alpha = %f, beta = %f\n", M, N, K, lda, ldc, alpha, beta);
     const int TILE_M = 16;
     const int TILE_N = 16;
     const int TILE_K = 16;  // Changed to match packing function
