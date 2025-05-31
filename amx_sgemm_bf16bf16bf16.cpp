@@ -34,7 +34,7 @@ int xdnn_small_amx_sgemm_bf16bf16bf16_packb_size(int N, int K, int block_rows, i
 void xdnn_small_amx_sgemm_bf16bf16bf16_packb(
         bool transB, int N, int K, const XDNN_BF16 *B, int stride, XDNN_BF16 *packedB, int size) {
     DEBUG_PRINT();
-    DEBUG_PRINT_PARAMS("N = %d, K = %d, stride = %d, size = %d\n", N, K, stride, size);
+    DEBUG_PRINT_PARAMS("transB = %d, N = %d, K = %d, stride = %d, size = %d\n", transB, N, K, stride, size);
     const int TILE_K = 16;
     const int TILE_N = 16;
     int n_blocks = (N + TILE_N - 1) / TILE_N;
