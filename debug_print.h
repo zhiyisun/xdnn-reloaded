@@ -3,7 +3,7 @@
 
 #include <stdio.h>
 
-// #define ENABLE_DEBUG_PRINT 1
+#define ENABLE_DEBUG_PRINT 1
 
 #ifdef ENABLE_DEBUG_PRINT
 #define DEBUG_PRINT() do { \
