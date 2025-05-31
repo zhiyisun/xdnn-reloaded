@@ -71,6 +71,7 @@ add_executable(test_hgemm_f32s8f32 ${CMAKE_CURRENT_SOURCE_DIR}/test_hgemm_f32s8f
 add_executable(test_hgemm_f32f16f32 ${CMAKE_CURRENT_SOURCE_DIR}/test_hgemm_f32f16f32.cpp ${PLATFORM_DETECTION_SRC})
 add_executable(test_bgemm_f32bf16f32 ${CMAKE_CURRENT_SOURCE_DIR}/test_bgemm_f32bf16f32.cpp ${PLATFORM_DETECTION_SRC})
 add_executable(test_bgemm_bf16bf16bf16 ${CMAKE_CURRENT_SOURCE_DIR}/test_bgemm_bf16bf16bf16.cpp ${PLATFORM_DETECTION_SRC})
+add_executable(test_amx_sgemm_bf16bf16bf16 ${CMAKE_CURRENT_SOURCE_DIR}/test_amx_sgemm_bf16bf16bf16.cpp ${PLATFORM_DETECTION_SRC})
 
 # Link against Google Test and the XDNN library
 if(STANDALONE_BUILD)
@@ -108,6 +109,7 @@ target_link_libraries(test_hgemm_f32s8f32 GTest::gtest GTest::gtest_main xdnn)
 target_link_libraries(test_hgemm_f32f16f32 GTest::gtest GTest::gtest_main xdnn)
 target_link_libraries(test_bgemm_f32bf16f32 GTest::gtest GTest::gtest_main xdnn)
 target_link_libraries(test_bgemm_bf16bf16bf16 GTest::gtest GTest::gtest_main xdnn)
+target_link_libraries(test_amx_sgemm_bf16bf16bf16 GTest::gtest GTest::gtest_main xdnn)
 
 # Add tests to CTest
 enable_testing()
@@ -129,3 +131,5 @@ gtest_discover_tests(test_hgemm_f32f16f32)
 gtest_discover_tests(test_hgemm_f32f16f32)
 gtest_discover_tests(test_bgemm_f32bf16f32)
 gtest_discover_tests(test_bgemm_bf16bf16bf16)
+gtest_discover_tests(test_amx_sgemm_bf16bf16bf16)
+
