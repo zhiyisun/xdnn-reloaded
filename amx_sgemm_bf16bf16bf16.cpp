@@ -35,64 +35,48 @@ void xdnn_small_amx_sgemm_bf16bf16bf16_packb(
         bool transB, int N, int K, const XDNN_BF16 *B, int stride, XDNN_BF16 *packedB, int size) {
     DEBUG_PRINT();
     DEBUG_PRINT_PARAMS("transB = %d, N = %d, K = %d, stride = %d, size = %d\n", transB, N, K, stride, size);
-    const int TILE_K = 16;
-    const int TILE_N = 16;
-    int n_blocks = (N + TILE_N - 1) / TILE_N;
-    int k_blocks = (K + TILE_K - 1) / TILE_K;
-    
+    std::vector<XDNN_BF16> B_buf;
+    const XDNN_BF16* B_used = B;
     if (transB) {
-        for (int k = 0; k < K; k += TILE_K) {
-            int k_block = std::min(TILE_K, K - k);
-            for (int n = 0; n < N; n += TILE_N) {
-                int n_block = std::min(TILE_N, N - n);
-                // Indexing: blocks in K-major order
-                int block_idx = (k / TILE_K) * n_blocks + (n / TILE_N);
-                
-                for (int kb = 0; kb < k_block; kb++) {
-                    for (int nb = 0; nb < n_block; nb++) {
-                        // Packing in K-major order within blocks
-                        int packed_idx = block_idx * TILE_K * TILE_N + kb * TILE_N + nb;
-                        packedB[packed_idx] = B[(k + kb) + (n + nb) * stride]; // transposed, so (n,k) -> (k,n)
-                    }
-                    // Zero-pad if needed
-                    for (int nb = n_block; nb < TILE_N; nb++) {
-                        packedB[block_idx * TILE_K * TILE_N + kb * TILE_N + nb] = XDNN_BF16(0.0f);
-                    }
-                }
-                // Zero-pad for remaining k values in the block
-                for (int kb = k_block; kb < TILE_K; kb++) {
-                    for (int nb = 0; nb < TILE_N; nb++) {
-                        packedB[block_idx * TILE_K * TILE_N + kb * TILE_N + nb] = XDNN_BF16(0.0f);
-                    }
-                }
+        // Transpose B from (N x K) with stride to (K x N) with stride=N
+        B_buf.resize(K * N);  // Allocate exactly K*N elements for the transposed matrix
+        for (int r = 0; r < N; ++r) {
+            for (int c = 0; c < K; ++c) {
+            B_buf[c * N + r] = B[r * stride + c];
             }
         }
-    } else {
-        for (int k = 0; k < K; k += TILE_K) {
-            int k_block = std::min(TILE_K, K - k);
-            for (int n = 0; n < N; n += TILE_N) {
-                int n_block = std::min(TILE_N, N - n);
-                // Indexing: blocks in K-major order
-                int block_idx = (k / TILE_K) * n_blocks + (n / TILE_N);
-                
-                for (int kb = 0; kb < k_block; kb++) {
-                    for (int nb = 0; nb < n_block; nb++) {
-                        // Packing in K-major order within blocks
-                        int packed_idx = block_idx * TILE_K * TILE_N + kb * TILE_N + nb;
-                        packedB[packed_idx] = B[(k + kb) * stride + (n + nb)];
-                    }
-                    // Zero-pad if needed
-                    for (int nb = n_block; nb < TILE_N; nb++) {
-                        packedB[block_idx * TILE_K * TILE_N + kb * TILE_N + nb] = XDNN_BF16(0.0f);
-                    }
-                }
-                // Zero-pad for remaining k values in the block
-                for (int kb = k_block; kb < TILE_K; kb++) {
-                    for (int nb = 0; nb < TILE_N; nb++) {
-                        packedB[block_idx * TILE_K * TILE_N + kb * TILE_N + nb] = XDNN_BF16(0.0f);
-                    }
-                }
-            }
+        stride = N;  // Update stride for the transposed matrix
+        B_used = B_buf.data();
+    }
+
+    const int TILE_K = 16;
+    const int TILE_N = 32;
+    
+    int src_blocks_per_row = (N + TILE_N - 1) / TILE_N;
+    int src_blocks_per_col = (K + 2 * TILE_K - 1) / (2  * TILE_K);
+
+    int packed_blocks_per_row = src_blocks_per_col;
+    int packed_blocks_per_col = src_blocks_per_row;
+    
+    memset(packedB, 0, size);
+
+    int num_cols = N;
+    int num_rows = K;
+
+    for (int row_index = 0; row_index < num_rows; row_index++) {
+        for (int col_index = 0; col_index < num_cols; col_index++) {
+            int src_block_index = (col_index / TILE_N) + src_blocks_per_row * (row_index / (2 * TILE_K));
+            int packed_block_index = (src_block_index % packed_blocks_per_col) * packed_blocks_per_row + (src_block_index / packed_blocks_per_col) ;
+            int packed_offset = packed_block_index * (2 * TILE_N * TILE_K);
+
+            int col_index_in_src_block = col_index % TILE_N;
+            int row_index_in_src_block = row_index % (2 * TILE_K);
+
+            int index_in_packed_block = TILE_K * TILE_N * (col_index_in_src_block / (TILE_N / 2)) + 2 * (col_index_in_src_block % (TILE_N / 2)) + row_index_in_src_block % 2 + (row_index_in_src_block / 2) * TILE_N;
+            
+            int packed_index = packed_offset + index_in_packed_block;
+
+            packedB[packed_index] = B_used[row_index * stride + col_index];
         }
     }
 }
