@@ -270,25 +270,23 @@ void xdnn_small_amx_sgemm_bf16bf16bf16_packb_reference(
             
             int packed_index = packed_offset + index_in_packed_block;
             
-            // Debug print for first few elements
-            if (row_index < 4 && col_index < 4) {
-                std::cout << "PACK[" << row_index << "," << col_index << "]: "
-                          << " src_blocks_per_row=" << src_blocks_per_row
-                          << ", src_blocks_per_col=" << src_blocks_per_col
-                          << ", packed_blocks_per_row=" << packed_blocks_per_row
-                          << ", packed_blocks_per_col=" << packed_blocks_per_col
-                          << ", src_block_index=" << src_block_index
-                          << ", packed_block_index=" << packed_block_index
-                          << ", packed_offset=" << packed_offset
-                          << ", col_in_src=" << col_index_in_src_block
-                          << ", row_in_src=" << row_index_in_src_block
-                          << ", index_in_block=" << index_in_packed_block
-                          << ", packed_idx=" << packed_index
-                          << ", num_cols=" << num_cols
-                          << ", index_B=" << (row_index * num_cols + col_index)
-                          << ", value=" << static_cast<float>(B_used[row_index * stride + col_index])
-                          << "\n";
-            }
+            // Debug print
+            std::cout << "PACK[" << row_index << "," << col_index << "]: "
+                        << " src_blocks_per_row=" << src_blocks_per_row
+                        << ", src_blocks_per_col=" << src_blocks_per_col
+                        << ", packed_blocks_per_row=" << packed_blocks_per_row
+                        << ", packed_blocks_per_col=" << packed_blocks_per_col
+                        << ", src_block_index=" << src_block_index
+                        << ", packed_block_index=" << packed_block_index
+                        << ", packed_offset=" << packed_offset
+                        << ", col_in_src=" << col_index_in_src_block
+                        << ", row_in_src=" << row_index_in_src_block
+                        << ", index_in_block=" << index_in_packed_block
+                        << ", packed_idx=" << packed_index
+                        << ", num_cols=" << num_cols
+                        << ", index_B=" << (row_index * num_cols + col_index)
+                        << ", value=" << static_cast<float>(B_used[row_index * stride + col_index])
+                        << "\n";
             
             packedB[packed_index] = B_used[row_index * stride + col_index];
         }
@@ -353,62 +351,62 @@ INSTANTIATE_TEST_SUITE_P(
     AMXSGEMMPackBSizeTest,
     ::testing::Values(
         // Basic test cases
-        // PackBSizeTestParams(1024, 128, 32, 32, "basic_case_1"),
-        // PackBSizeTestParams(128, 1024, 32, 32, "basic_case_2"),
+        PackBSizeTestParams(1024, 128, 32, 32, "basic_case_1"),
+        PackBSizeTestParams(128, 1024, 32, 32, "basic_case_2"),
         
-        // // Small matrices (edge cases)
-        // PackBSizeTestParams(16, 16, 32, 32, "small_matrix"),
-        // PackBSizeTestParams(1, 1, 32, 32, "single_element"),
-        // PackBSizeTestParams(10, 5, 64, 64, "block_size_larger_than_matrix"),
+        // Small matrices (edge cases)
+        PackBSizeTestParams(16, 16, 32, 32, "small_matrix"),
+        PackBSizeTestParams(1, 1, 32, 32, "single_element"),
+        PackBSizeTestParams(10, 5, 64, 64, "block_size_larger_than_matrix"),
         
-        // // Exact multiples
-        // PackBSizeTestParams(64, 64, 32, 32, "exact_multiples_64x64"),
-        // PackBSizeTestParams(128, 128, 16, 16, "exact_multiples_128x128"),
-        // PackBSizeTestParams(256, 256, 64, 64, "exact_multiples_256x256"),
+        // Exact multiples
+        PackBSizeTestParams(64, 64, 32, 32, "exact_multiples_64x64"),
+        PackBSizeTestParams(128, 128, 16, 16, "exact_multiples_128x128"),
+        PackBSizeTestParams(256, 256, 64, 64, "exact_multiples_256x256"),
         
-        // // Large matrices
-        // PackBSizeTestParams(2048, 512, 16, 16, "large_matrix_1"),
-        // PackBSizeTestParams(4096, 4096, 64, 64, "very_large_matrix"),
-        // PackBSizeTestParams(1024, 2048, 32, 32, "large_matrix_2"),
+        // Large matrices
+        PackBSizeTestParams(2048, 512, 16, 16, "large_matrix_1"),
+        PackBSizeTestParams(4096, 4096, 64, 64, "very_large_matrix"),
+        PackBSizeTestParams(1024, 2048, 32, 32, "large_matrix_2"),
         
-        // // Different block sizes
-        // PackBSizeTestParams(100, 200, 8, 8, "different_block_sizes_1"),
-        // PackBSizeTestParams(500, 300, 16, 32, "different_block_sizes_2"),
-        // PackBSizeTestParams(300, 500, 32, 16, "different_block_sizes_3"),
+        // Different block sizes
+        PackBSizeTestParams(100, 200, 8, 8, "different_block_sizes_1"),
+        PackBSizeTestParams(500, 300, 16, 32, "different_block_sizes_2"),
+        PackBSizeTestParams(300, 500, 32, 16, "different_block_sizes_3"),
         
-        // // Unbalanced matrices
-        // PackBSizeTestParams(2048, 16, 16, 16, "unbalanced_wide"),
-        // PackBSizeTestParams(16, 2048, 16, 16, "unbalanced_tall"),
-        // PackBSizeTestParams(1000, 50, 25, 25, "unbalanced_wide_2"),
-        // PackBSizeTestParams(50, 1000, 25, 25, "unbalanced_tall_2"),
+        // Unbalanced matrices
+        PackBSizeTestParams(2048, 16, 16, 16, "unbalanced_wide"),
+        PackBSizeTestParams(16, 2048, 16, 16, "unbalanced_tall"),
+        PackBSizeTestParams(1000, 50, 25, 25, "unbalanced_wide_2"),
+        PackBSizeTestParams(50, 1000, 25, 25, "unbalanced_tall_2"),
         
-        // // Various block configurations
-        // PackBSizeTestParams(512, 512, 8, 8, "block_config_8x8"),
-        // PackBSizeTestParams(512, 512, 16, 8, "block_config_16x8"),
-        // PackBSizeTestParams(512, 512, 8, 16, "block_config_8x16"),
-        // PackBSizeTestParams(1000, 1000, 20, 20, "block_config_20x20"),
+        // Various block configurations
+        PackBSizeTestParams(512, 512, 8, 8, "block_config_8x8"),
+        PackBSizeTestParams(512, 512, 16, 8, "block_config_16x8"),
+        PackBSizeTestParams(512, 512, 8, 16, "block_config_8x16"),
+        PackBSizeTestParams(1000, 1000, 20, 20, "block_config_20x20"),
         
-        // // Edge cases with different sizes
-        // PackBSizeTestParams(1, 1000, 10, 10, "edge_case_1x1000"),
-        // PackBSizeTestParams(1000, 1, 10, 10, "edge_case_1000x1"),
-        // PackBSizeTestParams(7, 13, 4, 4, "prime_numbers_small"),
-        // PackBSizeTestParams(31, 37, 8, 8, "prime_numbers_large"),
+        // Edge cases with different sizes
+        PackBSizeTestParams(1, 1000, 10, 10, "edge_case_1x1000"),
+        PackBSizeTestParams(1000, 1, 10, 10, "edge_case_1000x1"),
+        PackBSizeTestParams(7, 13, 4, 4, "prime_numbers_small"),
+        PackBSizeTestParams(31, 37, 8, 8, "prime_numbers_large"),
         
-        // // Mathematical properties test cases
-        // PackBSizeTestParams(32, 32, 16, 16, "monotonicity_small"),
-        // PackBSizeTestParams(64, 64, 16, 16, "monotonicity_medium"),
-        // PackBSizeTestParams(128, 128, 16, 16, "monotonicity_large"),
+        // Mathematical properties test cases
+        PackBSizeTestParams(32, 32, 16, 16, "monotonicity_small"),
+        PackBSizeTestParams(64, 64, 16, 16, "monotonicity_medium"),
+        PackBSizeTestParams(128, 128, 16, 16, "monotonicity_large"),
         
-        // // Symmetry test cases
-        // PackBSizeTestParams(100, 200, 16, 16, "symmetry_100x200"),
-        // PackBSizeTestParams(200, 100, 16, 16, "symmetry_200x100"),
+        // Symmetry test cases
+        PackBSizeTestParams(100, 200, 16, 16, "symmetry_100x200"),
+        PackBSizeTestParams(200, 100, 16, 16, "symmetry_200x100"),
         
-        // // Reference logic validation case
-        // PackBSizeTestParams(100, 200, 16, 32, "reference_logic_validation"),
+        // Reference logic validation case
+        PackBSizeTestParams(100, 200, 16, 32, "reference_logic_validation"),
         
-        // // Performance comparison cases
-        // PackBSizeTestParams(1024, 512, 32, 32, "performance_case_1"),
-        // PackBSizeTestParams(512, 1024, 16, 16, "performance_case_2"),
+        // Performance comparison cases
+        PackBSizeTestParams(1024, 512, 32, 32, "performance_case_1"),
+        PackBSizeTestParams(512, 1024, 16, 16, "performance_case_2"),
         PackBSizeTestParams(2048, 256, 64, 64, "performance_case_3")
     )
 );
@@ -570,8 +568,8 @@ TEST_P(AMXSGEMMPackBTest, PackBFunctionTest) {
     fillTestMatrix(B, matrix_rows, matrix_cols, params.stride, false, params.transB);
     
     // Create output buffers for both implementations
-    std::vector<XDNN_BF16> packedB_actual(params.size / sizeof(XDNN_BF16));
-    std::vector<XDNN_BF16> packedB_reference(params.size / sizeof(XDNN_BF16));
+    std::vector<XDNN_BF16> packedB_actual(params.size);
+    std::vector<XDNN_BF16> packedB_reference(params.size);
     
     // Call both implementations
     xdnn_small_amx_sgemm_bf16bf16bf16_packb(
@@ -583,7 +581,7 @@ TEST_P(AMXSGEMMPackBTest, PackBFunctionTest) {
         packedB_reference.data(), params.size);
     
     // Compare the results
-    int num_elements = params.size / sizeof(XDNN_BF16);
+    int num_elements = params.size;
     bool matrices_match = true;
     int first_mismatch = -1;
     
@@ -631,16 +629,16 @@ INSTANTIATE_TEST_SUITE_P(
     AMXSGEMMPackBTest,
     ::testing::Values(
         // Required test cases from the task description
-        // PackBTestParams{true, 1024, 128, 4096, 262144, "required_case_transB_true_N1024_K128"},
-        // PackBTestParams{false, 128, 1024, 4096, 262144, "required_case_transB_false_N128_K1024"},
+        PackBTestParams{true, 1024, 128, 4096, 131072, "required_case_transB_true_N1024_K128"},
+        PackBTestParams{false, 128, 1024, 4096, 131072, "required_case_transB_false_N128_K1024"},
 
-        // // Additional test cases for comprehensive coverage
-        // PackBTestParams{false, 128, 96, 256, 24576, "small_matrix_128x96"},
-        // PackBTestParams{true, 128, 96, 256, 24576, "small_matrix_128x96"},
+        // Additional test cases for comprehensive coverage
+        PackBTestParams{false, 128, 96, 256, 24576, "small_matrix_128x96"},
+        PackBTestParams{true, 128, 96, 256, 24576, "small_matrix_128x96"},
 
-        // PackBTestParams{true, 64, 64, 1024, 16384, "small_square_transposed"},
-        // PackBTestParams{false, 64, 64, 1024, 16384, "small_square_normal"},
-        // PackBTestParams{true, 256, 256, 4096, 131072, "medium_square_transposed"},
+        PackBTestParams{true, 64, 64, 1024, 16384, "small_square_transposed"},
+        PackBTestParams{false, 64, 64, 1024, 16384, "small_square_normal"},
+        PackBTestParams{true, 256, 256, 4096, 131072, "medium_square_transposed"},
         PackBTestParams{false, 32, 128, 128, 8192, "medium_square_normal"},
         PackBTestParams{false, 256, 256, 4096, 131072, "medium_square_normal"}
     )
@@ -1006,6 +1004,73 @@ INSTANTIATE_TEST_SUITE_P(
         ComputeTestParams(32, 256, 192, 192, 98304, 256, 0.000000f, "case_62_N256_K192_lda192_ldb98304_ldc256"),
         ComputeTestParams(32, 256, 224, 224, 114688, 256, 0.000000f, "case_63_N256_K224_lda224_ldb114688_ldc256"),
         ComputeTestParams(32, 256, 256, 256, 131072, 256, 0.000000f, "case_64_N256_K256_lda256_ldb131072_ldc256"),
-        ComputeTestParams(32, 32, 128, 4096, 128, 1024, 0.000000f, "case_64_N256_K256_lda256_ldb131072_ldc256")
+        ComputeTestParams(32, 32, 128, 4096, 128, 1024, 0.000000f, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32, 1024, 128, 4096, 128, 1024, 0.000000f, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+
+    
+        ComputeTestParams(32,1024,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,128,1024,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,128,128,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,128,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,128,160,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,128,192,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,128,224,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,128,256,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,128,288,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,128,320,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,128,32,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,128,352,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,128,384,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,128,416,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,128,448,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,128,480,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,128,512,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,128,544,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,128,576,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,128,608,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,128,640,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,128,64,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,128,672,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,128,704,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,128,736,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,128,768,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,128,800,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,128,832,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,128,864,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,128,896,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,128,928,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,128,960,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,128,96,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,128,992,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,160,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,192,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,224,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,256,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,288,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,320,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,32,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,352,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,384,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,416,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,448,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,480,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,512,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,544,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,576,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,608,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,640,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,64,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,672,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,704,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,736,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,768,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,800,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,832,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,864,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,896,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,928,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,960,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,96,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,992,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256")
     )
 );
