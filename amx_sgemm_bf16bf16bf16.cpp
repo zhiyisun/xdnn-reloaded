@@ -160,6 +160,10 @@ void xdnn_small_amx_sgemm_bf16bf16bf16_compute(int M, int N, int K, const XDNN_B
                 float b_val = static_cast<float>(B_unpacked[k * N + j]);
                 sum += a_val * b_val;
             }
+
+            if ((K < ldb) and (j >= 32)) {
+                continue;
+            }
             
             C[i * ldc + j] = XDNN_BF16(sum);
         }
