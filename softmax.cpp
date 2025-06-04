@@ -33,7 +33,7 @@ void small_softmax_f32(float *data, const float scale, int size) {
 
 // Implementation of softmax functions for BF16
 void small_softmax_bf16(XDNN_BF16 *data, const float scale, int size) {
-    DEBUG_PRINT();
+    // DEBUG_PRINT();
     DEBUG_PRINT_PARAMS("scale = %f, size = %d\n", scale, size);
     // Convert BF16 to FP32 for computation
     // Find max value

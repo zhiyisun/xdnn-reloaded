@@ -33,8 +33,8 @@ inline float relu(float x) {
 
 // To pack matrix B (row-major KxN output)
 void xdnn_bgemm_f32bf16f32_packb(bool transB, int N, int K, const XDNN_BF16* B, int ldb, XDNN_BF16* packedB, int block_rows, int block_cols) {
-    DEBUG_PRINT();
-    // DEBUG_PRINT_PARAMS("transB = %d, N = %d, K = %d, ldb = %d, block_rows = %d, block_cols = %d\n", transB, N, K, ldb, block_rows, block_cols);
+    // DEBUG_PRINT();
+    DEBUG_PRINT_PARAMS("transB = %d, N = %d, K = %d, ldb = %d, block_rows = %d, block_cols = %d\n", transB, N, K, ldb, block_rows, block_cols);
     std::vector<XDNN_BF16> B_buf;
     const XDNN_BF16* B_used = B;
     if (transB) {

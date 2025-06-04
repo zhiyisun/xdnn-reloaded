@@ -13,7 +13,7 @@
 
 #define DEBUG_PRINT_PARAMS(fmt, ...) do { \
     FILE* f = fopen("/tmp/xdnn.log", "a"); \
-    if (f) { fprintf(f, "[DEBUG] %s: " fmt "\n", __FUNCTION__, __VA_ARGS__); fclose(f); } \
+    if (f) { fprintf(f, "[PARAMETER DEBUG] %s: " fmt "\n", __FUNCTION__, __VA_ARGS__); fclose(f); } \
 } while(0)
 
 #else
