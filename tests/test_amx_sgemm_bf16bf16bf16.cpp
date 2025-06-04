@@ -844,7 +844,7 @@ TEST_P(AMXSGEMMComputeTest, ComputeFunctionTest) {
     
     // Create packed B matrix using the packing function
     int pack_size = xdnn_small_amx_sgemm_bf16bf16bf16_packb_size(params.ldb, params.K, 32, 32);
-    std::vector<XDNN_BF16> packedB(pack_size / sizeof(XDNN_BF16));
+    std::vector<XDNN_BF16> packedB(pack_size);
     
     // Use the actual packing function to pack matrix B
     xdnn_small_amx_sgemm_bf16bf16bf16_packb(
