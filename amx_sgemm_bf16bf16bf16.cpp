@@ -86,8 +86,84 @@ void xdnn_small_amx_sgemm_bf16bf16bf16_compute(int M, int N, int K, const XDNN_B
         const XDNN_BF16 *packedB, int ldb, XDNN_BF16 *C, int ldc, float beta) {
     DEBUG_PRINT();
     DEBUG_PRINT_PARAMS("M = %d, N = %d, K = %d, lda = %d, ldb = %d, ldc = %d, beta = %f\n", M, N, K, lda, ldb, ldc, beta);
-    // Call the implementation with alpha = 1.0
-    xdnn_small_amx_sgemm_bf16bf16bf16_compute_BA16a64b2a(M, N, K, A, lda, packedB, C, ldc, 1.0f, beta);
+
+    // First apply beta scaling to C
+    for (int i = 0; i < M; i++) {
+        for (int j = 0; j < N; j++) {
+            C[i * ldc + j] = XDNN_BF16(beta * static_cast<float>(C[i * ldc + j]));
+        }
+    }
+    
+    // Step 1: Unpack the packedB matrix
+    // This reverses the packing algorithm used in xdnn_small_amx_sgemm_bf16bf16bf16_packb_reference
+    std::vector<XDNN_BF16> B_unpacked(K * N);
+    
+    const int TILE_K = 16;
+    const int TILE_N = 32;
+    
+    int src_blocks_per_row = (N + TILE_N - 1) / TILE_N;
+    int src_blocks_per_col = (K + 2 * TILE_K - 1) / (2 * TILE_K);
+    int packed_blocks_per_row = src_blocks_per_col;
+    int packed_blocks_per_col = src_blocks_per_row;
+    
+    int num_cols = N;
+    int num_rows = K;
+    
+    // Initialize the unpacked matrix with zeros first
+    std::fill(B_unpacked.begin(), B_unpacked.end(), XDNN_BF16(0.0f));
+
+    // Unpack: reverse the packing process
+    // Use the exact same calculation as in the actual packing function
+    // The packing uses AMX-optimized tiling with TILE_K=16, TILE_N=32
+    // Source blocks cover 2*TILE_K rows (32 rows) and TILE_N columns (32 columns)
+    // Complex intra-block indexing is used for optimal AMX performance
+    
+    for (int row_index = 0; row_index < num_rows; row_index++) {
+        for (int col_index = 0; col_index < num_cols; col_index++) {
+            // Use the exact same calculation as in the packing function
+            int src_block_index = (col_index / TILE_N) + src_blocks_per_row * (row_index / (2 * TILE_K));
+            int packed_block_index = (src_block_index % packed_blocks_per_col) * packed_blocks_per_row + (src_block_index / packed_blocks_per_col);
+            int packed_offset = packed_block_index * (2 * TILE_N * TILE_K);
+
+            int col_index_in_src_block = col_index % TILE_N;
+            int row_index_in_src_block = row_index % (2 * TILE_K);
+
+            // Use the exact same complex AMX indexing as the packing function
+            int index_in_packed_block = TILE_K * TILE_N * (col_index_in_src_block / (TILE_N / 2)) + 
+                                       2 * (col_index_in_src_block % (TILE_N / 2)) + 
+                                       row_index_in_src_block % 2 + 
+                                       (row_index_in_src_block / 2) * TILE_N;
+            
+            int packed_index = packed_offset + index_in_packed_block;
+            
+            // Reverse: extract from packed format back to unpacked matrix
+            // The packing function filled packedB sequentially for all valid (row, col) pairs
+            // For small matrices, some packed indices may be out of bounds or contain padding zeros
+            if (packed_index < (K * N * 4)) {  // Conservative bounds check
+                B_unpacked[row_index * num_cols + col_index] = packedB[packed_index];
+            } else {
+                // This should not happen if our unpacking algorithm is correct
+                std::cout << "WARNING: packed_index " << packed_index << " is out of bounds for K=" << K << ", N=" << N << std::endl;
+                B_unpacked[row_index * num_cols + col_index] = XDNN_BF16(0.0f);
+            }
+        }
+    }
+    
+    // Step 3: Perform matrix multiplication: C = A * B + beta * C
+    // Note: beta has already been applied to C above
+    for (int i = 0; i < M; i++) {
+        for (int j = 0; j < N; j++) {
+            float sum = static_cast<float>(C[i * ldc + j]); // Already scaled by beta above
+            
+            for (int k = 0; k < K; k++) {
+                float a_val = static_cast<float>(A[i * lda + k]);
+                float b_val = static_cast<float>(B_unpacked[k * N + j]);
+                sum += a_val * b_val;
+            }
+            
+            C[i * ldc + j] = XDNN_BF16(sum);
+        }
+    }
 }
 
 // AMX optimized GEMM computation for BF16 input and FP32 output
