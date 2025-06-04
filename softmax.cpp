@@ -9,7 +9,7 @@
 
 // Implementation of softmax functions for float (F32)
 void small_softmax_f32(float *data, const float scale, int size) {
-    DEBUG_PRINT();
+    // DEBUG_PRINT();
     DEBUG_PRINT_PARAMS("scale = %f, size = %d\n", scale, size);
     // Find max value
     float max_val = data[0];
