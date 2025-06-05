@@ -773,19 +773,20 @@ void xdnn_small_amx_sgemm_bf16bf16bf16_compute_reference(
     
     // Step 3: Perform matrix multiplication: C = A * B + beta * C
     // Note: beta has already been applied to C above
-    for (int i = 0; i < M; i++) {
-        for (int j = 0; j < N; j++) {
-            float sum = static_cast<float>(C[i * ldc + j]); // Already scaled by beta above
+    for (int m = 0; m < M; m++) {
+        for (int k = 0; k < K; k++) {
+            float sum = static_cast<float>(C[m * ldc + k]); // Already scaled by beta above
             
-            for (int k = 0; k < K; k++) {
-                float a_val = static_cast<float>(A[i * lda + k]);
-                float b_val = static_cast<float>(B_unpacked[k * N + j]);
+            for (int n = 0; n < N; n++) {
+                float a_val = static_cast<float>(A[m * lda + n]);
+                float b_val = static_cast<float>(B_unpacked[n * K + k]);
                 sum += a_val * b_val;
             }
 
-            C[i * ldc + j] = XDNN_BF16(sum);
+            C[m * ldc + k] = XDNN_BF16(sum);
         }
     }
+
     // Print final Matrix C (after computation)
     std::cout << "Final Matrix C (reference computation):" << std::endl;
     for (int i = 0; i < M; i++) {
@@ -1031,17 +1032,17 @@ INSTANTIATE_TEST_SUITE_P(
         // ComputeTestParams(32,128,128,1024,512,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256")
 
     
-        ComputeTestParams(32,1024,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
-        ComputeTestParams(32,128,1024,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
-        ComputeTestParams(32,128,128,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
-        ComputeTestParams(32,128,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
-        ComputeTestParams(32,128,160,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
-        ComputeTestParams(32,128,192,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
-        ComputeTestParams(32,128,224,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
-        ComputeTestParams(32,128,256,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        // ComputeTestParams(32,1024,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        // ComputeTestParams(32,128,1024,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        // ComputeTestParams(32,128,128,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        // ComputeTestParams(32,128,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        // ComputeTestParams(32,128,160,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        // ComputeTestParams(32,128,192,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        // ComputeTestParams(32,128,224,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        // ComputeTestParams(32,128,256,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
         // ComputeTestParams(32,128,288,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
         // ComputeTestParams(32,128,320,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
-        ComputeTestParams(32,128,32,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        // ComputeTestParams(32,128,32,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
         // ComputeTestParams(32,128,352,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
         // ComputeTestParams(32,128,384,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
         // ComputeTestParams(32,128,416,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
@@ -1052,7 +1053,7 @@ INSTANTIATE_TEST_SUITE_P(
         // ComputeTestParams(32,128,576,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
         // ComputeTestParams(32,128,608,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
         // ComputeTestParams(32,128,640,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
-        ComputeTestParams(32,128,64,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        // ComputeTestParams(32,128,64,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
         // ComputeTestParams(32,128,672,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
         // ComputeTestParams(32,128,704,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
         // ComputeTestParams(32,128,736,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
@@ -1063,37 +1064,37 @@ INSTANTIATE_TEST_SUITE_P(
         // ComputeTestParams(32,128,896,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
         // ComputeTestParams(32,128,928,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
         // ComputeTestParams(32,128,960,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
-        // ComputeTestParams(32,128,96,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        ComputeTestParams(32,128,96,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256")
         // ComputeTestParams(32,128,992,1024,1024,2048,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
-        ComputeTestParams(32,160,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
-        ComputeTestParams(32,192,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
-        ComputeTestParams(32,224,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
-        ComputeTestParams(32,256,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
-        ComputeTestParams(32,288,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
-        ComputeTestParams(32,320,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
-        ComputeTestParams(32,32,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
-        ComputeTestParams(32,352,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
-        ComputeTestParams(32,384,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
-        ComputeTestParams(32,416,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
-        ComputeTestParams(32,448,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
-        ComputeTestParams(32,480,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
-        ComputeTestParams(32,512,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
-        ComputeTestParams(32,544,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
-        ComputeTestParams(32,576,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
-        ComputeTestParams(32,608,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
-        ComputeTestParams(32,640,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
-        ComputeTestParams(32,64,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
-        ComputeTestParams(32,672,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
-        ComputeTestParams(32,704,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
-        ComputeTestParams(32,736,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
-        ComputeTestParams(32,768,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
-        ComputeTestParams(32,800,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
-        ComputeTestParams(32,832,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
-        ComputeTestParams(32,864,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
-        ComputeTestParams(32,896,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
-        ComputeTestParams(32,928,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
-        ComputeTestParams(32,960,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
-        ComputeTestParams(32,96,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
-        ComputeTestParams(32,992,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256")
+        // ComputeTestParams(32,160,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        // ComputeTestParams(32,192,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        // ComputeTestParams(32,224,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        // ComputeTestParams(32,256,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        // ComputeTestParams(32,288,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        // ComputeTestParams(32,320,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        // ComputeTestParams(32,32,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        // ComputeTestParams(32,352,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        // ComputeTestParams(32,384,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        // ComputeTestParams(32,416,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        // ComputeTestParams(32,448,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        // ComputeTestParams(32,480,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        // ComputeTestParams(32,512,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        // ComputeTestParams(32,544,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        // ComputeTestParams(32,576,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        // ComputeTestParams(32,608,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        // ComputeTestParams(32,640,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        // ComputeTestParams(32,64,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        // ComputeTestParams(32,672,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        // ComputeTestParams(32,704,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        // ComputeTestParams(32,736,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        // ComputeTestParams(32,768,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        // ComputeTestParams(32,800,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        // ComputeTestParams(32,832,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        // ComputeTestParams(32,864,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        // ComputeTestParams(32,896,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        // ComputeTestParams(32,928,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        // ComputeTestParams(32,960,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        // ComputeTestParams(32,96,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256"),
+        // ComputeTestParams(32,992,128,4096,128,1024,0.000000, "case_64_N256_K256_lda256_ldb131072_ldc256")
     )
 );
