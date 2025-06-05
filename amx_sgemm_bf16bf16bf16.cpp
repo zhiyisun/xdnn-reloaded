@@ -89,7 +89,7 @@ void xdnn_small_amx_sgemm_bf16bf16bf16_compute(int M, int N, int K, const XDNN_B
 
     // First apply beta scaling to C
     for (int i = 0; i < M; i++) {
-        for (int j = 0; j < N; j++) {
+        for (int j = 0; j < K; j++) {
             C[i * ldc + j] = XDNN_BF16(beta * static_cast<float>(C[i * ldc + j]));
         }
     }
