@@ -782,10 +782,6 @@ void xdnn_small_amx_sgemm_bf16bf16bf16_compute_reference(
                 float b_val = static_cast<float>(B_unpacked[k * N + j]);
                 sum += a_val * b_val;
             }
-            
-            if ((K < ldb) and (j >= 32)) {
-                continue;
-            }
 
             C[i * ldc + j] = XDNN_BF16(sum);
         }
@@ -906,7 +902,7 @@ TEST_P(AMXSGEMMComputeTest, ComputeFunctionTest) {
     xdnn_small_amx_sgemm_bf16bf16bf16_compute(
         params.M, params.N, params.K,
         A.data(), params.lda,
-        packedB.data(), params.ldb,
+        B.data(), params.ldb,
         C_actual.data(), params.ldc,
         params.beta
     );
@@ -915,7 +911,7 @@ TEST_P(AMXSGEMMComputeTest, ComputeFunctionTest) {
     xdnn_small_amx_sgemm_bf16bf16bf16_compute_reference(
         params.M, params.N, params.K,
         A.data(), params.lda,
-        packedB.data(), params.ldb,  // Use K as the stride for packed matrix, not params.ldb
+        B.data(), params.ldb,  // Use K as the stride for packed matrix, not params.ldb
         C_reference.data(), params.ldc,
         params.beta
     );
