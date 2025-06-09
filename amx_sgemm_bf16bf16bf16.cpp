@@ -151,7 +151,7 @@ void xdnn_small_amx_sgemm_bf16bf16bf16_compute(int M, int N, int K, const XDNN_B
     
     // Step 3: Perform matrix multiplication: C = A * B + beta * C
     // Note: beta has already been applied to C above
-    static tmp = 0;
+    static int tmp = 0;
     for (int m = 0; m < M; m++) {
         for (int n = 0; n < N; n++) {
             float sum = static_cast<float>(C[m * ldc + n]); // Already scaled by beta above
