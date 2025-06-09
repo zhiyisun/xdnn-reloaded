@@ -148,7 +148,10 @@ void xdnn_small_amx_sgemm_bf16bf16bf16_compute(int M, int N, int K, const XDNN_B
             }
         }
     }
-    
+    // Step 2: Zero initialize the entire C matrix (M * ldc elements)
+    for (int m = 0; m < M; m++) {
+        memset(&C[m * ldc], 0, ldc * sizeof(XDNN_BF16));
+    }
     // Step 3: Perform matrix multiplication: C = A * B + beta * C
     // Note: beta has already been applied to C above
     for (int m = 0; m < M; m++) {
