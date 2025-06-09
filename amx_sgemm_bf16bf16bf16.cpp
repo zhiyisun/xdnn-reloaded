@@ -86,13 +86,18 @@ void xdnn_small_amx_sgemm_bf16bf16bf16_compute(int M, int N, int K, const XDNN_B
         const XDNN_BF16 *packedB, int ldb, XDNN_BF16 *C, int ldc, float beta) {
     // DEBUG_PRINT();
     DEBUG_PRINT_PARAMS("M = %d, N = %d, K = %d, lda = %d, ldb = %d, ldc = %d, beta = %f\n", M, N, K, lda, ldb, ldc, beta);
+    
+    // Debug print C[129] if K=96
+    if (K == 96 && M * ldc > 129) {
+        DEBUG_PRINT_PARAMS("Before computation: C[129] = %f\n", static_cast<float>(C[129]));
+    }
 
     // First apply beta scaling to C
-    // for (int i = 0; i < M; i++) {
-    //     for (int j = 0; j < N; j++) {
-    //         C[i * ldc + j] = XDNN_BF16(beta * static_cast<float>(C[i * ldc + j]));
-    //     }
-    // }
+    for (int i = 0; i < M; i++) {
+        for (int j = 0; j < N; j++) {
+            C[i * ldc + j] = XDNN_BF16(beta * static_cast<float>(C[i * ldc + j]));
+        }
+    }
     
     // Step 1: Unpack the packedB matrix
     // This reverses the packing algorithm used in xdnn_small_amx_sgemm_bf16bf16bf16_packb_reference
@@ -149,12 +154,16 @@ void xdnn_small_amx_sgemm_bf16bf16bf16_compute(int M, int N, int K, const XDNN_B
         }
     }
 
+    // Debug print C[129] if K=96
+    if (K == 96 && M * ldc > 129) {
+        DEBUG_PRINT_PARAMS("Before computation 2: C[129] = %f\n", static_cast<float>(C[129]));
+    }
+
     // Step 3: Perform matrix multiplication: C = A * B + beta * C
     // Note: beta has already been applied to C above
     for (int m = 0; m < M; m++) {
         for (int n = 0; n < N; n++) {
-            // float sum = static_cast<float>(C[m * ldc + n]); // Already scaled by beta above
-            float sum = 0;
+            float sum = static_cast<float>(C[m * ldc + n]); // Already scaled by beta above
 
             for (int k = 0; k < K; k++) {
                 float a_val = static_cast<float>(A[m * lda + k]);
@@ -164,6 +173,11 @@ void xdnn_small_amx_sgemm_bf16bf16bf16_compute(int M, int N, int K, const XDNN_B
 
             C[m * ldc + n] = XDNN_BF16(sum);
         }
+    }
+
+    // Debug print C[129] if K=96
+    if (K == 96 && M * ldc > 129) {
+        DEBUG_PRINT_PARAMS("Before computation 3: C[129] = %f\n", static_cast<float>(C[129]));
     }
 }
 
