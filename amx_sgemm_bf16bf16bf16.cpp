@@ -151,7 +151,6 @@ void xdnn_small_amx_sgemm_bf16bf16bf16_compute(int M, int N, int K, const XDNN_B
     
     // Step 3: Perform matrix multiplication: C = A * B + beta * C
     // Note: beta has already been applied to C above
-    static int tmp = 0;
     for (int m = 0; m < M; m++) {
         for (int n = 0; n < N; n++) {
             float sum = static_cast<float>(C[m * ldc + n]); // Already scaled by beta above
@@ -162,11 +161,9 @@ void xdnn_small_amx_sgemm_bf16bf16bf16_compute(int M, int N, int K, const XDNN_B
                 sum += a_val * b_val;
             }
 
-            // C[m * ldc + n] = XDNN_BF16(sum);
-            C[m * ldc + n] = XDNN_BF16(m * N + n + tmp);
+            C[m * ldc + n] = XDNN_BF16(sum);
         }
     }
-    tmp++;
 }
 
 // AMX optimized GEMM computation for BF16 input and FP32 output
