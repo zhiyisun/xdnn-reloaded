@@ -6,6 +6,9 @@
 #include <immintrin.h>
 #include <algorithm>
 #include <vector>
+#include <semaphore.h>
+#include <iostream>
+#include <cstdlib>
 
 // Fallback conversion helpers if not defined elsewhere
 #ifndef _xdnn_to_float
@@ -13,6 +16,32 @@
 
 #ifndef _xdnn_to_bf16
 #endif
+
+// Global semaphore for thread-safe AMX GEMM compute function
+static sem_t amx_compute_semaphore;
+static bool semaphore_initialized = false;
+
+// Initialize semaphore on first use
+static void init_semaphore() {
+    if (!semaphore_initialized) {
+        if (sem_init(&amx_compute_semaphore, 0, 1) == 0) {
+            semaphore_initialized = true;
+        } else {
+            std::cerr << "Failed to initialize AMX compute semaphore" << std::endl;
+        }
+    }
+}
+
+// Cleanup semaphore on program exit
+static void cleanup_semaphore() {
+    if (semaphore_initialized) {
+        sem_destroy(&amx_compute_semaphore);
+        semaphore_initialized = false;
+    }
+}
+
+// Register cleanup function to be called at program exit
+static int register_cleanup = (atexit(cleanup_semaphore), 0);
 
 // AMX packing function for bfloat16 matrices
 int xdnn_small_amx_sgemm_bf16bf16bf16_packb_size(int N, int K, int block_rows, int block_cols) {
@@ -84,6 +113,17 @@ void xdnn_small_amx_sgemm_bf16bf16bf16_packb(
 // AMX optimized GEMM computation for BF16 input and output
 void xdnn_small_amx_sgemm_bf16bf16bf16_compute(int M, int N, int K, const XDNN_BF16 *A, int lda,
         const XDNN_BF16 *packedB, int ldb, XDNN_BF16 *C, int ldc, float beta) {
+    // Initialize semaphore on first use
+    init_semaphore();
+    
+    // Acquire semaphore to ensure only one thread can execute this function at a time
+    if (semaphore_initialized) {
+        if (sem_wait(&amx_compute_semaphore) != 0) {
+            std::cerr << "Failed to acquire AMX compute semaphore" << std::endl;
+            return;
+        }
+    }
+    
     // DEBUG_PRINT();
     DEBUG_PRINT_PARAMS("M = %d, N = %d, K = %d, lda = %d, ldb = %d, ldc = %d, beta = %f\n", M, N, K, lda, ldb, ldc, beta);
 
@@ -162,6 +202,13 @@ void xdnn_small_amx_sgemm_bf16bf16bf16_compute(int M, int N, int K, const XDNN_B
             }
 
             C[m * ldc + n] = XDNN_BF16(sum);
+        }
+    }
+    
+    // Release semaphore
+    if (semaphore_initialized) {
+        if (sem_post(&amx_compute_semaphore) != 0) {
+            std::cerr << "Failed to release AMX compute semaphore" << std::endl;
         }
     }
 }
