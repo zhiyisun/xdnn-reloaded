@@ -86,11 +86,6 @@ void xdnn_small_amx_sgemm_bf16bf16bf16_compute(int M, int N, int K, const XDNN_B
         const XDNN_BF16 *packedB, int ldb, XDNN_BF16 *C, int ldc, float beta) {
     // DEBUG_PRINT();
     DEBUG_PRINT_PARAMS("M = %d, N = %d, K = %d, lda = %d, ldb = %d, ldc = %d, beta = %f\n", M, N, K, lda, ldb, ldc, beta);
-    
-    // Debug print C[129] if K=96
-    if (K == 96 && M * ldc > 129) {
-        DEBUG_PRINT_PARAMS("Before computation: C[129] = %f\n", static_cast<float>(C[129]));
-    }
 
     // First apply beta scaling to C
     for (int i = 0; i < M; i++) {
@@ -154,11 +149,6 @@ void xdnn_small_amx_sgemm_bf16bf16bf16_compute(int M, int N, int K, const XDNN_B
         }
     }
 
-    // Debug print C[129] if K=96
-    if (K == 96 && M * ldc > 129) {
-        DEBUG_PRINT_PARAMS("Before computation 2: C[129] = %f\n", static_cast<float>(C[129]));
-    }
-
     // Step 3: Perform matrix multiplication: C = A * B + beta * C
     // Note: beta has already been applied to C above
     for (int m = 0; m < M; m++) {
@@ -173,11 +163,6 @@ void xdnn_small_amx_sgemm_bf16bf16bf16_compute(int M, int N, int K, const XDNN_B
 
             C[m * ldc + n] = XDNN_BF16(sum);
         }
-    }
-
-    // Debug print C[129] if K=96
-    if (K == 96 && M * ldc > 129) {
-        DEBUG_PRINT_PARAMS("Before computation 3: C[129] = %f\n", static_cast<float>(C[129]));
     }
 }
 
