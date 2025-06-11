@@ -106,7 +106,7 @@ void xdnn_hgemm_f16f16f32_compute(bool transA, int M, int N, int K,
                                  float alpha, const XDNN_FP16 *A, int lda, const XDNN_FP16 *packedB,
                                  float beta, float *C, int ldc) {
     // DEBUG_PRINT();
-    DEBUG_PRINT_PARAMS("transA = %d, M = %d, N = %d, K = %d, alpha = %f, lda = %d, beta = %f, ldc = %d\n", transA, M, N, K, alpha, lda, alpha, beta, ldc);
+    DEBUG_PRINT_PARAMS("transA = %d, M = %d, N = %d, K = %d, alpha = %f, lda = %d, beta = %f, ldc = %d\n", transA, M, N, K, alpha, lda, beta, ldc);
 
     // Apply beta scaling to C
     if (beta != 1.0f) {
