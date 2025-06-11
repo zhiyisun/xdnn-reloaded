@@ -96,18 +96,18 @@ void xdnn_small_amx_sgemm_bf16bf16bf16_compute(int M, int N, int K, const XDNN_B
     
     // Step 1: Unpack the packedB matrix
     // This reverses the packing algorithm used in xdnn_small_amx_sgemm_bf16bf16bf16_packb_reference
-    std::vector<XDNN_BF16> B_unpacked(K * N);
+    std::vector<XDNN_BF16> B_unpacked(ldb * N);
     
     const int TILE_K = 16;
     const int TILE_N = 32;
     
     int src_blocks_per_row = (N + TILE_N - 1) / TILE_N;
-    int src_blocks_per_col = (K + 2 * TILE_K - 1) / (2 * TILE_K);
+    int src_blocks_per_col = (ldb + 2 * TILE_K - 1) / (2 * TILE_K);
     int packed_blocks_per_row = src_blocks_per_col;
     int packed_blocks_per_col = src_blocks_per_row;
     
     int num_cols = N;
-    int num_rows = K;
+    int num_rows = ldb;
     
     // Initialize the unpacked matrix with zeros first
     std::fill(B_unpacked.begin(), B_unpacked.end(), XDNN_BF16(0.0f));
@@ -139,11 +139,11 @@ void xdnn_small_amx_sgemm_bf16bf16bf16_compute(int M, int N, int K, const XDNN_B
             // Reverse: extract from packed format back to unpacked matrix
             // The packing function filled packedB sequentially for all valid (row, col) pairs
             // For small matrices, some packed indices may be out of bounds or contain padding zeros
-            if (packed_index < (K * N * 4)) {  // Conservative bounds check
+            if (packed_index < (ldb * N * 4)) {  // Conservative bounds check
                 B_unpacked[row_index * num_cols + col_index] = packedB[packed_index];
             } else {
                 // This should not happen if our unpacking algorithm is correct
-                std::cout << "WARNING: packed_index " << packed_index << " is out of bounds for K=" << K << ", N=" << N << std::endl;
+                std::cout << "WARNING: packed_index " << packed_index << " is out of bounds for ldb=" << ldb << ", N=" << N << std::endl;
                 B_unpacked[row_index * num_cols + col_index] = XDNN_BF16(0.0f);
             }
         }
@@ -155,7 +155,7 @@ void xdnn_small_amx_sgemm_bf16bf16bf16_compute(int M, int N, int K, const XDNN_B
         for (int n = 0; n < N; n++) {
             float sum = static_cast<float>(C[m * ldc + n]); // Already scaled by beta above
 
-            for (int k = 0; k < K; k++) {
+            for (int k = 0; k < ldb; k++) {
                 float a_val = static_cast<float>(A[m * lda + k]);
                 float b_val = static_cast<float>(B_unpacked[k * N + n]);
                 sum += a_val * b_val;

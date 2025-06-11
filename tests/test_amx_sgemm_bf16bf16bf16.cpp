@@ -674,24 +674,24 @@ void xdnn_small_amx_sgemm_bf16bf16bf16_compute_reference(
 
     // Step 1: Unpack the packedB matrix
     // This reverses the packing algorithm used in xdnn_small_amx_sgemm_bf16bf16bf16_packb_reference
-    std::vector<XDNN_BF16> B_unpacked(K * N);
+    std::vector<XDNN_BF16> B_unpacked(ldb * N);
     
     const int TILE_K = 16;
     const int TILE_N = 32;
     
     int src_blocks_per_row = (N + TILE_N - 1) / TILE_N;
-    int src_blocks_per_col = (K + 2 * TILE_K - 1) / (2 * TILE_K);
+    int src_blocks_per_col = (ldb + 2 * TILE_K - 1) / (2 * TILE_K);
     int packed_blocks_per_row = src_blocks_per_col;
     int packed_blocks_per_col = src_blocks_per_row;
     
     int num_cols = N;
-    int num_rows = K;
+    int num_rows = ldb;
     
     // Initialize the unpacked matrix with zeros first
     std::fill(B_unpacked.begin(), B_unpacked.end(), XDNN_BF16(0.0f));
     
     // Debug: Print packing parameters
-    std::cout << "Unpacking parameters: K=" << K << ", N=" << N 
+    std::cout << "Unpacking parameters: ldb=" << ldb << ", N=" << N 
               << ", src_blocks_per_row=" << src_blocks_per_row 
               << ", src_blocks_per_col=" << src_blocks_per_col
               << ", packed_blocks_per_row=" << packed_blocks_per_row
@@ -699,7 +699,7 @@ void xdnn_small_amx_sgemm_bf16bf16bf16_compute_reference(
     
     // Debug: Print first 64 elements of packedB to see what we're working with
     std::cout << "First 64 elements of packedB:" << std::endl;
-    for (int i = 0; i < std::min(64, K * N * 4); i++) {
+    for (int i = 0; i < std::min(64, ldb * N * 4); i++) {
         if (i % 16 == 0) std::cout << "\n[" << std::setw(2) << i/16 << "] ";
         std::cout << std::setw(6) << std::fixed << std::setprecision(1) 
                   << static_cast<float>(packedB[i]) << " ";
@@ -740,7 +740,7 @@ void xdnn_small_amx_sgemm_bf16bf16bf16_compute_reference(
                           << ", packed_index=" << packed_index;
                 
                 // Check bounds before accessing packedB
-                if (packed_index < (K * N * 4)) {  // Conservative bounds check
+                if (packed_index < (ldb * N * 4)) {  // Conservative bounds check
                     std::cout << ", packedB[" << packed_index << "]=" << static_cast<float>(packedB[packed_index]);
                 } else {
                     std::cout << ", packedB[" << packed_index << "]=OUT_OF_BOUNDS";
@@ -751,19 +751,19 @@ void xdnn_small_amx_sgemm_bf16bf16bf16_compute_reference(
             // Reverse: extract from packed format back to unpacked matrix
             // The packing function filled packedB sequentially for all valid (row, col) pairs
             // For small matrices, some packed indices may be out of bounds or contain padding zeros
-            if (packed_index < (K * N * 4)) {  // Conservative bounds check
+            if (packed_index < (ldb * N * 4)) {  // Conservative bounds check
                 B_unpacked[row_index * num_cols + col_index] = packedB[packed_index];
             } else {
                 // This should not happen if our unpacking algorithm is correct
-                std::cout << "WARNING: packed_index " << packed_index << " is out of bounds for K=" << K << ", N=" << N << std::endl;
+                std::cout << "WARNING: packed_index " << packed_index << " is out of bounds for ldb=" << ldb << ", N=" << N << std::endl;
                 B_unpacked[row_index * num_cols + col_index] = XDNN_BF16(0.0f);
             }
         }
     }
     
     // Step 2: Print the full unpacked matrix
-    std::cout << "Unpacked B matrix (full " << K << "x" << N << " matrix):" << std::endl;
-    for (int i = 0; i < K; i++) {
+    std::cout << "Unpacked B matrix (full " << ldb << "x" << N << " matrix):" << std::endl;
+    for (int i = 0; i < ldb; i++) {
         for (int j = 0; j < N; j++) {
             std::cout << std::fixed << std::setprecision(4) << std::setw(8) 
                       << static_cast<float>(B_unpacked[i * N + j]) << " ";
@@ -778,7 +778,7 @@ void xdnn_small_amx_sgemm_bf16bf16bf16_compute_reference(
         for (int n = 0; n < N; n++) {
             float sum = static_cast<float>(C[m * ldc + n]); // Already scaled by beta above
 
-            for (int k = 0; k < K; k++) {
+            for (int k = 0; k < ldb; k++) {
                 float a_val = static_cast<float>(A[m * lda + k]);
                 float b_val = static_cast<float>(B_unpacked[k * N + n]);
                 sum += a_val * b_val;
@@ -909,7 +909,7 @@ TEST_P(AMXSGEMMComputeTest, ComputeFunctionTest) {
     xdnn_small_amx_sgemm_bf16bf16bf16_compute(
         params.M, params.N, params.K,
         A.data(), params.lda,
-        B.data(), params.K,
+        B.data(), params.ldb,
         C_actual.data(), params.ldc,
         params.beta
     );
@@ -918,7 +918,7 @@ TEST_P(AMXSGEMMComputeTest, ComputeFunctionTest) {
     xdnn_small_amx_sgemm_bf16bf16bf16_compute_reference(
         params.M, params.N, params.K,
         A.data(), params.lda,
-        B.data(), params.K,
+        B.data(), params.ldb,
         C_reference.data(), params.ldc,
         params.beta
     );
