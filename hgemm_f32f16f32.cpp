@@ -30,12 +30,31 @@ inline float relu(float x) {
 
 // To pack matrix B (row-major KxN output)
 void xdnn_hgemm_f32f16f32_packb(bool transB, int N, int K, const XDNN_FP16* B, int ldb, XDNN_FP16* packedB) {
-    DEBUG_PRINT();
-    for (int k = 0; k < K; ++k) {
-        for (int n = 0; n < N; ++n) {
-            int src_idx = transB ? (n * ldb + k) : (k * ldb + n);
-            int dst_idx = k * N + n;
-            packedB[dst_idx] = B[src_idx];
+    // DEBUG_PRINT();
+    DEBUG_PRINT_PARAMS("transB = %d, N = %d, K = %d, ldb = %d\n", transB, N, K, ldb);
+
+    const int block_size = 64;
+    int num_blocks = (N + block_size - 1) / block_size; // Round up division
+    
+    int packed_idx = 0;
+    
+    // Process each block of 64 columns (or remaining columns for last block)
+    for (int block = 0; block < num_blocks; block++) {
+        int block_start = block * block_size;
+        int block_end = std::min(block_start + block_size, N);
+        int block_width = block_end - block_start;
+        
+        // Pack this block row by row
+        for (int k = 0; k < K; k++) {
+            for (int n = block_start; n < block_end; n++) {
+                if (!transB) {
+                    // B is K×N
+                    packedB[packed_idx++] = B[k * ldb + n];
+                } else {
+                    // B is N×K (transposed)
+                    packedB[packed_idx++] = B[n * ldb + k];
+                }
+            }
         }
     }
 }
