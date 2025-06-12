@@ -283,7 +283,14 @@ INSTANTIATE_TEST_SUITE_P(
         HGEMMPackBF32F16F32TestParams(false, 1, 1, 1, "edge_case_N1_K1_notrans"),
         HGEMMPackBF32F16F32TestParams(true, 1, 1, 1, "edge_case_N1_K1_trans"),
         HGEMMPackBF32F16F32TestParams(false, 64, 64, 128, "stride_variation_N64_K64_notrans"),
-        HGEMMPackBF32F16F32TestParams(true, 64, 64, 128, "stride_variation_N64_K64_trans")
+        HGEMMPackBF32F16F32TestParams(true, 64, 64, 128, "stride_variation_N64_K64_trans"),
+        
+        // Additional parameter combinations from user request
+        HGEMMPackBF32F16F32TestParams(false, 4096, 1024, 4096, "user_request_N4096_K1024_notrans"),
+        HGEMMPackBF32F16F32TestParams(false, 1024, 2048, 1024, "user_request_N1024_K2048_notrans"),
+        HGEMMPackBF32F16F32TestParams(false, 6144, 1024, 6144, "user_request_N6144_K1024_notrans"),
+        HGEMMPackBF32F16F32TestParams(false, 1024, 3072, 1024, "user_request_N1024_K3072_notrans"),
+        HGEMMPackBF32F16F32TestParams(true, 151936, 1024, 1024, "user_request_N151936_K1024_trans")
     )
 );
 
