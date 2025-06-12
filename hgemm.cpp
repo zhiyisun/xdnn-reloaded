@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <immintrin.h>
 #include <cmath>
+#include <vector>
 
 // Helper functions for activation
 inline float silu(float x) {
