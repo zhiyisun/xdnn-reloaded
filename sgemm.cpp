@@ -269,6 +269,8 @@ void xdnn_sgemm_compute_resmul(bool transA, int M, int N, int K,
 // Below is single thread small sgemm
 // ================================================================================
 void small_sgemm(int M, int N, int K, const float *A, int lda, const float *B, int ldb, float *C, int ldc) {
+    DEBUG_PRINT();
+
     // Assuming A, B are not transposed (transA=false, transB=false)
     // Assuming alpha = 1.0f and beta = 0.0f (C is overwritten)
 

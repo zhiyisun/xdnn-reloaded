@@ -425,6 +425,7 @@ void xdnn_small_amx_sgemm_bf16f8bf16_compute_residential_batch_AM(int M, int N, 
 const char *xdnn_small_amx_sgemm_bf16f8bf16_compute_test(int caseid, int M, int N, int K, const XDNN_BF16 *A, int lda,
         const XDNN_E4M3 *packedB, XDNN_BF16 *C, int ldc, const float *scaleB, int lds, int blockSize, float alpha,
         float beta, const float *bias) {
+    DEBUG_PRINT();
     
     switch (caseid) {
         case 0: // Test single-threaded implementation
@@ -448,6 +449,7 @@ const char *xdnn_small_amx_sgemm_bf16f8bf16_compute_test(int caseid, int M, int 
 const char *xdnn_small_amx_sgemm_bf16f8bf16_compute_residential_test(int caseid, int M, int N, int K,
         const XDNN_BF16 *A, int lda, const XDNN_E4M3 *packedB, XDNN_BF16 *C, int ldc, const float *scaleB, int lds,
         int blockSize, float alpha, float beta, const float *bias, const XDNN_BF16 *res, int ldres) {
+    DEBUG_PRINT();
     
     switch (caseid) {
         case 0:
@@ -466,6 +468,7 @@ const char *xdnn_small_amx_sgemm_bf16f8bf16_compute_residential_test(int caseid,
 const char *xdnn_small_amx_sgemm_bf16f8bf16_compute_batch_A_test(int caseid, int M, int N, int K,
         const XDNN_BF16 *ABatch[], const int *ldab, const XDNN_E4M3 *packedBBatch[], XDNN_BF16 *C, int ldc,
         const float *scaleBBatch[], const int *scaleB_lda, int blockSize, const float *alphaBatch, int BSize) {
+    DEBUG_PRINT();
     
     switch (caseid) {
         case 0:
@@ -485,6 +488,7 @@ const char *xdnn_small_amx_sgemm_bf16f8bf16_compute_batch_A_test(int caseid, int
 const char *xdnn_small_amx_sgemm_bf16f8bf16_compute_batch_AM_test(int caseid, int M, int N, const int *KBatch,
         const XDNN_BF16 *ABatch[], const int *ldab, const XDNN_E4M3 *packedBBatch[], XDNN_BF16 *C, int ldc,
         const float *scaleBBatch[], const int *scaleB_lda, int blockSize, const float *alphaBatch, int BSize) {
+    DEBUG_PRINT();
     
     switch (caseid) {
         case 0:
@@ -504,6 +508,7 @@ const char *xdnn_small_amx_sgemm_bf16f8bf16_compute_residential_batch_A_test(int
         const XDNN_BF16 *ABatch[], const int *ldab, const XDNN_E4M3 *packedBBatch[], XDNN_BF16 *C, int ldc,
         const float *scaleBBatch[], const int *scaleB_lda, int blockSize, const float *alphaBatch, int packedBBatchSize,
         const XDNN_BF16 *res, int ldres) {
+    DEBUG_PRINT();
     
     switch (caseid) {
         case 0:
@@ -523,6 +528,7 @@ const char *xdnn_small_amx_sgemm_bf16f8bf16_compute_residential_batch_AM_test(in
         const XDNN_BF16 *ABatch[], const int *ldab, const XDNN_E4M3 *packedBBatch[], XDNN_BF16 *C, int ldc,
         const float *scaleBBatch[], const int *scaleB_lda, int blockSize, const float *alphaBatch, int packedBBatchSize,
         const XDNN_BF16 *res, int ldres) {
+    DEBUG_PRINT();
     
     switch (caseid) {
         case 0:
@@ -541,6 +547,7 @@ const char *xdnn_small_amx_sgemm_bf16f8bf16_compute_residential_batch_AM_test(in
 const char *xdnn_small_amx_sgemm_bf16f8bf16_compute_batch_C_test(int caseid, int M, int N, int K, const XDNN_BF16 *A,
         int lda, const XDNN_E4M3 *packedBBatch[], XDNN_BF16 *CBatch[], const int *ldcb, const float *scaleBBatch[],
         const int *scaleB_lda, int blockSize, const float *alphaBatch, int BSize) {
+    DEBUG_PRINT();
     
     switch (caseid) {
         case 0:
@@ -559,6 +566,7 @@ const char *xdnn_small_amx_sgemm_bf16f8bf16_compute_batch_C_test(int caseid, int
 const char *xdnn_small_amx_sgemm_bf16f8bf16_compute_batch_CM_test(int caseid, int M, const int *NBatch, int K,
         const XDNN_BF16 *A, int lda, const XDNN_E4M3 *packedBBatch[], XDNN_BF16 *CBatch[], const int *ldcb,
         const float *scaleBBatch[], const int *scaleB_lda, int blockSize, const float *alphaBatch, int BSize) {
+    DEBUG_PRINT();
     
     switch (caseid) {
         case 0:
@@ -578,6 +586,7 @@ const char *xdnn_small_amx_sgemm_bf16f8bf16_compute_residential_batch_C_test(int
         const XDNN_BF16 *A, int lda, const XDNN_E4M3 *packedBBatch[], XDNN_BF16 *CBatch[], const int *ldcb,
         const float *scaleBBatch[], const int *scaleB_lda, int blockSize, const float *alphaBatch, int packedBBatchSize,
         const XDNN_BF16 *resBatch[], const int *ldresb) {
+    DEBUG_PRINT();
     
     switch (caseid) {
         case 0:
@@ -597,6 +606,7 @@ const char *xdnn_small_amx_sgemm_bf16f8bf16_compute_residential_batch_CM_test(in
         const XDNN_BF16 *A, int lda, const XDNN_E4M3 *packedBBatch[], XDNN_BF16 *CBatch[], const int *ldcb,
         const float *scaleBBatch[], const int *scaleB_lda, int blockSize, const float *alphaBatch, int packedBBatchSize,
         const XDNN_BF16 *resBatch[], const int *ldresb) {
+    DEBUG_PRINT();
     
     switch (caseid) {
         case 0:

@@ -3,6 +3,7 @@
 #include <cmath>
 #include <thread>
 #include <algorithm>
+#include "debug_print.h"
 
 // Number of threads to use for parallel operations
 constexpr int NUM_THREADS = 4;
@@ -29,6 +30,7 @@ inline float relu(float x) {
 
 // To pack matrix B (row-major KxN output)
 void xdnn_hgemm_f32f16f32_packb(bool transB, int N, int K, const XDNN_FP16* B, int ldb, XDNN_FP16* packedB) {
+    DEBUG_PRINT();
     for (int k = 0; k < K; ++k) {
         for (int n = 0; n < N; ++n) {
             int src_idx = transB ? (n * ldb + k) : (k * ldb + n);
@@ -42,6 +44,7 @@ void xdnn_hgemm_f32f16f32_packb(bool transB, int N, int K, const XDNN_FP16* B, i
 void xdnn_hgemm_f32f16f32_compute(bool transA, int M, int N, int K,
         float alpha, const float* A, int lda, const XDNN_FP16* packedB,
         float beta, float* C, int ldc) {
+    DEBUG_PRINT();
     
     for (int m = 0; m < M; ++m) {
         for (int n = 0; n < N; ++n) {
@@ -64,6 +67,7 @@ void xdnn_hgemm_f32f16f32_compute(bool transA, int M, int N, int K,
 void xdnn_hgemm_f32f16f32_compute_silu(bool transA, int M, int N, int K,
         float alpha, const float* A, int lda, const XDNN_FP16* packedB,
         float beta, float* C, int ldc) {
+    DEBUG_PRINT();
     
     // First compute the matrix multiplication
     for (int m = 0; m < M; ++m) {
@@ -91,6 +95,7 @@ void xdnn_hgemm_f32f16f32_compute_silu(bool transA, int M, int N, int K,
 void xdnn_hgemm_f32f16f32_compute_gelu(bool transA, int M, int N, int K,
         float alpha, const float* A, int lda, const XDNN_FP16* packedB,
         float beta, float* C, int ldc) {
+    DEBUG_PRINT();
     
     // First compute the matrix multiplication
     for (int m = 0; m < M; ++m) {
@@ -118,6 +123,7 @@ void xdnn_hgemm_f32f16f32_compute_gelu(bool transA, int M, int N, int K,
 void xdnn_hgemm_f32f16f32_compute_biasadd(bool transA, int M, int N, int K,
         float alpha, const float* A, int lda, const XDNN_FP16* packedB,
         float beta, float* C, int ldc, const float* bias) {
+    DEBUG_PRINT();
     
     for (int m = 0; m < M; ++m) {
         for (int n = 0; n < N; ++n) {
@@ -140,6 +146,7 @@ void xdnn_hgemm_f32f16f32_compute_biasadd(bool transA, int M, int N, int K,
 void xdnn_hgemm_f32f16f32_compute_biasadd_relu(bool transA, int M, int N, int K,
         float alpha, const float* A, int lda, const XDNN_FP16* packedB,
         float beta, float* C, int ldc, const float* bias) {
+    DEBUG_PRINT();
     
     for (int m = 0; m < M; ++m) {
         for (int n = 0; n < N; ++n) {
@@ -165,6 +172,7 @@ void xdnn_hgemm_f32f16f32_compute_biasadd_relu(bool transA, int M, int N, int K,
 void xdnn_hgemm_f32f16f32_compute_residential(bool transA, int M, int N, int K,
         float alpha, const float* A, int lda, const XDNN_FP16* packedB,
         float beta, float* C, int ldc, const float* bias, const float* res, int ldres) {
+    DEBUG_PRINT();
     
     for (int m = 0; m < M; ++m) {
         for (int n = 0; n < N; ++n) {
@@ -188,6 +196,7 @@ void xdnn_hgemm_f32f16f32_compute_resext(bool transA, int M, int N, int K,
         float alpha, const float* A, int lda, const XDNN_FP16* packedB,
         float beta, float* C, int ldc, const float* bias, 
         float gamma, const float* res, int ldres) {
+    DEBUG_PRINT();
     
     for (int m = 0; m < M; ++m) {
         for (int n = 0; n < N; ++n) {
@@ -210,6 +219,7 @@ void xdnn_hgemm_f32f16f32_compute_resext(bool transA, int M, int N, int K,
 void xdnn_hgemm_f32f16f32_compute_resmul(bool transA, int M, int N, int K,
         float alpha, const float* A, int lda, const XDNN_FP16* packedB,
         float beta, float* C, int ldc, const float* res, int ldres) {
+    DEBUG_PRINT();
     
     for (int m = 0; m < M; ++m) {
         for (int n = 0; n < N; ++n) {
@@ -234,6 +244,8 @@ void xdnn_hgemm_f32f16f32_compute_resmul(bool transA, int M, int N, int K,
 
 // Single-thread small HGEMM
 void small_hgemm_f32f16f32(int M, int N, int K, const float* A, int lda, const XDNN_FP16* B, int ldb, float* C, int ldc) {
+    DEBUG_PRINT();
+
     for (int m = 0; m < M; ++m) {
         for (int n = 0; n < N; ++n) {
             float sum = 0.0f;
@@ -251,6 +263,8 @@ void small_hgemm_f32f16f32(int M, int N, int K, const float* A, int lda, const X
 static void compute_block(bool transA, int m_start, int m_end, int N, int K,
                   float alpha, const float* A, int lda, const XDNN_FP16* packedB,
                   float beta, float* C, int ldc) {
+    DEBUG_PRINT();
+
     for (int m = m_start; m < m_end; ++m) {
         for (int n = 0; n < N; ++n) {
             float sum = 0.0f;
@@ -272,6 +286,7 @@ static void compute_block(bool transA, int m_start, int m_end, int N, int K,
 void xdnn_hgemm_f32f16f32(bool transA, bool transB, int M, int N, int K,
        float alpha, const float* A, int lda, const XDNN_FP16* B, int ldb,
        float beta, float* C, int ldc) {
+    DEBUG_PRINT();
     
     // Create temporary storage for packed B matrix
     std::vector<XDNN_FP16> packedB(K * N);

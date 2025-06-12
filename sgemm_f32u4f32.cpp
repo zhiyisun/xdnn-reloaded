@@ -47,6 +47,9 @@ static void set_u4_val_static(XDNN_UINT4x2* data, int index, uint8_t val) {
 // Quantize FP32 to UINT4 (4-bit unsigned integer)
 void xdnn_sgemm_f32u4f32_quantize(bool transB, int N, int K, const float *B, int ldb,
                                  float quantization_rate, XDNN_UINT4x2 *quantizedB, int ldqb, float *scaleB, float *zeroB) {
+
+    DEBUG_PRINT();
+
     const int num_quant_cols = transB ? K : N;
     const int num_quant_rows = transB ? N : K;
 

@@ -132,8 +132,9 @@ void transpose_avx_float_8x8(const float *src, int src_stride, float *dst, int d
 // AVX-optimized transpose for float32 matrices
 void transpose_avx_float(const float *src, int src_rows, int src_cols, int src_stride, 
                         float *dst, int dst_stride) {
-#ifdef __AVX__
     DEBUG_PRINT();
+
+#ifdef __AVX__
     // Process blocks of 8x8
     int block_rows = (src_rows / 8) * 8;
     int block_cols = (src_cols / 8) * 8;
