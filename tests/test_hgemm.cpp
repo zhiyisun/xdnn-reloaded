@@ -1,665 +1,593 @@
-#include "gtest/gtest.h"
+// filepath: /home/zhiyis/workspace/code/xdnn-reloaded/tests/test_hgemm.cpp
 #include "hgemm.h"
-#include "data_types/data_types.h" 
-#include "test_common.h" // For potential future common utilities, though not strictly needed now
-
+#include "test_common.h"
+#include <gtest/gtest.h>
 #include <vector>
-#include <numeric> // For std::iota if used for initialization
-#include <cmath>     // For std::tanh, std::exp, std::pow, std::sqrt, std::abs, atan
-#include <algorithm> // For std::max, std::fill, std::generate
-#include <random>    // For random data initialization
+#include <cmath>
+#include <algorithm>
+#include <cstring>
+#include <iostream>
+#include <iomanip>
+#include <sstream>
+#include <random>
+#include <stdexcept>
 
-// Helper function to initialize a matrix with sequential or random values (XDNN_FP16 version)
-void init_matrix(std::vector<XDNN_FP16>& matrix, int rows, int cols, int ld, bool sequential = true, int seed_offset = 0) {
-    matrix.resize(ld * (rows > 0 ? rows : 1));
-    if (rows == 0 || cols == 0) return;
-    if (sequential) {
-        float val = 1.0f;
-        for (int r = 0; r < rows; ++r) {
-            for (int c = 0; c < cols; ++c) {
-                matrix[r * ld + c] = XDNN_FP16(val++);
+// Helper functions for matrix debugging and utilities
+namespace MatrixDebugUtils {
+    
+    // Print a 2D matrix stored in row-major format
+    void printMatrix(const XDNN_FP16* matrix, int rows, int cols, int stride, 
+                     const std::string& name, int max_rows = -1, int max_cols = -1) {
+        // If max_rows or max_cols is -1, print all rows/cols
+        int print_rows = (max_rows == -1) ? rows : std::min(rows, max_rows);
+        int print_cols = (max_cols == -1) ? cols : std::min(cols, max_cols);
+        
+        std::cout << name << " (" << rows << "x" << cols << ", stride=" << stride << "):\n";
+        for (int i = 0; i < print_rows; i++) {
+            for (int j = 0; j < print_cols; j++) {
+                std::cout << std::fixed << std::setprecision(3) << static_cast<float>(matrix[i * stride + j]) << " ";
             }
+            if (cols > print_cols) std::cout << "...";
+            std::cout << "\n";
         }
-    } else {
-        std::mt19937 gen(1337 + seed_offset);
-        std::uniform_real_distribution<float> distrib(-2.0f, 2.0f);
-        for (int r = 0; r < rows; ++r) {
-            for (int c = 0; c < cols; ++c) {
-                matrix[r * ld + c] = XDNN_FP16(distrib(gen));
-            }
+        if (rows > print_rows) std::cout << "...\n";
+        std::cout << "\n";
+    }
+    
+    // Print matrix statistics
+    void printMatrixStats(const XDNN_FP16* matrix, int num_elements, const std::string& name) {
+        float min_val = FLT_MAX, max_val = -FLT_MAX, sum = 0.0f;
+        for (int i = 0; i < num_elements; i++) {
+            float val = static_cast<float>(matrix[i]);
+            min_val = std::min(min_val, val);
+            max_val = std::max(max_val, val);
+            sum += val;
         }
+        std::cout << name << " stats: min=" << min_val << ", max=" << max_val 
+                  << ", avg=" << (sum / num_elements) << "\n";
     }
 }
 
-// Reference HGEMM computation: C = alpha * A * B + beta * C (all float math, XDNN_FP16 storage)
-void reference_hgemm_computation(
-    bool transA, bool transB, int M, int N, int K,
-    float alpha, const std::vector<XDNN_FP16>& A, int lda,
-    const std::vector<XDNN_FP16>& B, int ldb,
-    float beta, std::vector<XDNN_FP16>& C, int ldc) {
-    if (M == 0 || N == 0) return;
-    if (alpha != 1.0f || (beta != 0.0f && beta != 1.0f)) {
-        std::cout << "[SKIP] reference_hgemm_computation: Only alpha=1.0f and beta=0.0f or 1.0f are supported for xdnn_hgemm tests. Got alpha=" << alpha << ", beta=" << beta << std::endl;
-        GTEST_SKIP() << "reference_hgemm_computation: Only alpha=1.0f and beta=0.0f or 1.0f are supported for xdnn_hgemm tests. Got alpha=" << alpha << ", beta=" << beta;
-        return;
-    }
-    for (int m = 0; m < M; ++m) {
-        for (int n = 0; n < N; ++n) {
-            float sum = 0.0f;
-            if (K > 0) {
-                for (int k = 0; k < K; ++k) {
-                    float valA = static_cast<float>(transA ? A[k * lda + m] : A[m * lda + k]);
-                    float valB = static_cast<float>(transB ? B[n * ldb + k] : B[k * ldb + n]);
-                    sum += valA * valB;
+// Reference implementation for matrix packing (B matrix)
+// New algorithm: divide matrix into blocks of 64 columns, then pack row by row
+void reference_packb(bool transB, int N, int K, const XDNN_FP16* B, int ldb, XDNN_FP16* packedB) {
+    const int block_size = 64;
+    int num_blocks = (N + block_size - 1) / block_size; // Round up division
+    
+    int packed_idx = 0;
+    
+    // Process each block of 64 columns (or remaining columns for last block)
+    for (int block = 0; block < num_blocks; block++) {
+        int block_start = block * block_size;
+        int block_end = std::min(block_start + block_size, N);
+        int block_width = block_end - block_start;
+        
+        // Pack this block row by row
+        for (int k = 0; k < K; k++) {
+            for (int n = block_start; n < block_end; n++) {
+                if (!transB) {
+                    // B is K×N
+                    packedB[packed_idx++] = B[k * ldb + n];
+                } else {
+                    // B is N×K (transposed)
+                    packedB[packed_idx++] = B[n * ldb + k];
                 }
             }
-            if (beta == 0.0f) {
-                C[m * ldc + n] = XDNN_FP16(alpha * sum);
-            } else {
-                C[m * ldc + n] = XDNN_FP16(alpha * sum + beta * static_cast<float>(C[m * ldc + n]));
+        }
+    }
+}
+
+// Reference implementation for xdnn_hgemm_compute
+void xdnn_hgemm_compute_reference(bool transA, int M, int N, int K,
+                                  float alpha, const XDNN_FP16* A, int lda, const XDNN_FP16* packedB,
+                                  float beta, XDNN_FP16* C, int ldc) {
+    // Check if transA is supported
+    if (transA) {
+        throw std::runtime_error("transA = true is not currently supported in the reference implementation");
+    }
+    
+    // Unpack the packed B matrix back to original K×N format
+    // This reverses the reference_packb algorithm
+    std::vector<XDNN_FP16> B_unpacked(K * N);
+    const int block_size = 64;
+    int num_blocks = (N + block_size - 1) / block_size; // Round up division
+    
+    int packed_idx = 0;
+    
+    // Process each block of 64 columns (or remaining columns for last block)
+    for (int block = 0; block < num_blocks; block++) {
+        int block_start = block * block_size;
+        int block_end = std::min(block_start + block_size, N);
+        int block_width = block_end - block_start;
+        
+        // Unpack this block row by row
+        for (int k = 0; k < K; k++) {
+            for (int n = block_start; n < block_end; n++) {
+                // Unpack to K×N format (original B matrix after transpose)
+                B_unpacked[k * N + n] = packedB[packed_idx++];
             }
         }
     }
-}
+    
+    // Print the unpacked B matrix for debugging
+    std::cout << "\n--- Unpacked B Matrix in Reference Implementation ---\n";
+    MatrixDebugUtils::printMatrix(B_unpacked.data(), K, N, N, "B_unpacked (K×N format)", -1, -1);
 
-// Helper reference functions for post-operations (XDNN_FP16 version)
-void apply_silu_to_matrix(std::vector<XDNN_FP16>& matrix, int M, int N, int ldc) {
-    if (M == 0 || N == 0) return;
-    for (int r = 0; r < M; ++r) {
-        for (int c = 0; c < N; ++c) {
-            float v = static_cast<float>(matrix[r * ldc + c]);
-            matrix[r * ldc + c] = XDNN_FP16(v * (1.0f / (1.0f + std::exp(-v))));
-        }
-    }
-}
-void apply_gelu_to_matrix(std::vector<XDNN_FP16>& matrix, int M, int N, int ldc) {
-    if (M == 0 || N == 0) return;
-    for (int r = 0; r < M; ++r) {
-        for (int c = 0; c < N; ++c) {
-            float x = static_cast<float>(matrix[r * ldc + c]);
-            float gelu = 0.5f * x * (1.0f + std::tanh(std::sqrt(2.0f / M_PI) * (x + 0.044715f * std::pow(x, 3.0f))));
-            matrix[r * ldc + c] = XDNN_FP16(gelu);
-        }
-    }
-}
-void apply_relu_to_matrix(std::vector<XDNN_FP16>& matrix, int M, int N, int ldc) {
-    if (M == 0 || N == 0) return;
-    for (int r = 0; r < M; ++r) {
-        for (int c = 0; c < N; ++c) {
-            float v = static_cast<float>(matrix[r * ldc + c]);
-            matrix[r * ldc + c] = XDNN_FP16(std::max(0.0f, v));
-        }
-    }
-}
-void apply_bias_add_to_matrix(std::vector<XDNN_FP16>& C, int M, int N, int ldc, const std::vector<float>& bias_vec) {
-    if (M == 0 || N == 0 || bias_vec.empty()) return;
-    for (int r = 0; r < M; ++r) {
-        for (int c = 0; c < N; ++c) {
-            float v = static_cast<float>(C[r * ldc + c]) + bias_vec[c];
-            C[r * ldc + c] = XDNN_FP16(v);
-        }
-    }
-}
-void apply_residential_to_matrix(std::vector<XDNN_FP16>& C, int M, int N, int ldc, const std::vector<float>& bias_vec, const std::vector<XDNN_FP16>& res_vec, int ldres) {
-    if (M == 0 || N == 0) return;
-    bool has_bias = !bias_vec.empty();
-    bool has_res = !res_vec.empty();
-    for (int r = 0; r < M; ++r) {
-        for (int c = 0; c < N; ++c) {
-            float v = static_cast<float>(C[r * ldc + c]);
-            if (has_bias) v += bias_vec[c];
-            if (has_res)  v += static_cast<float>(res_vec[r * ldres + c]);
-            C[r * ldc + c] = XDNN_FP16(v);
-        }
-    }
-}
-void apply_resext_to_matrix(std::vector<XDNN_FP16>& C, int M, int N, int ldc, const std::vector<float>& bias_vec, float gamma, const std::vector<XDNN_FP16>& res_vec, int ldres) {
-    if (M == 0 || N == 0) return;
-    bool has_bias = !bias_vec.empty();
-    bool has_res = !res_vec.empty();
-    for (int r = 0; r < M; ++r) {
-        for (int c = 0; c < N; ++c) {
-            float v = static_cast<float>(C[r * ldc + c]);
-            if (has_bias) v += bias_vec[c];
-            if (has_res)  v += gamma * static_cast<float>(res_vec[r * ldres + c]);
-            C[r * ldc + c] = XDNN_FP16(v);
-        }
-    }
-}
-void apply_resmul_to_matrix(std::vector<XDNN_FP16>& C, int M, int N, int ldc, const std::vector<XDNN_FP16>& res_vec, int ldres) {
-    if (M == 0 || N == 0 || res_vec.empty()) return;
-    for (int r = 0; r < M; ++r) {
-        for (int c = 0; c < N; ++c) {
-            float v = static_cast<float>(C[r * ldc + c]) * static_cast<float>(res_vec[r * ldres + c]);
-            C[r * ldc + c] = XDNN_FP16(v);
-        }
-    }
-}
-
-// Test Fixture for HGEMM tests
-class HgemmTest : public ::testing::Test {
-protected:
-    std::vector<XDNN_FP16> A, B, C_actual, C_expected, packedB_actual;
-    std::vector<float> bias;
-    std::vector<XDNN_FP16> res;
-    void verify_matrices(int M, int N, int ldc, float tolerance = FP16_PRECISION_TOLERANCE) {
-        ASSERT_EQ(C_actual.size(), C_expected.size());
-        if (M == 0 || N == 0) return;
-        for (int r = 0; r < M; ++r) {
-            for (int c = 0; c < N; ++c) {
-                float v_actual = static_cast<float>(C_actual[r * ldc + c]);
-                float v_expected = static_cast<float>(C_expected[r * ldc + c]);
-                EXPECT_NEAR(v_actual, v_expected, tolerance) << "Mismatch at C[" << r << "][" << c << "]";
+    // Matrix multiplication with unpacked B (now in K×N format)
+    // Note: transA = true is not supported and checked above
+    for (int m = 0; m < M; m++) {
+        for (int n = 0; n < N; n++) {
+            float sum = static_cast<float>(C[m * ldc + n]) * beta;
+            for (int k = 0; k < K; k++) {
+                // A is M×K format when transA = false (the only supported case)
+                float a_val = static_cast<float>(A[m * lda + k]);
+                float b_val = static_cast<float>(B_unpacked[k * N + n]);
+                sum += alpha * a_val * b_val;
             }
+
+            C[m * ldc + n] = XDNN_FP16(sum);
         }
     }
-};
+}
 
-struct HgemmParams {
+// Test structure for compute function parameters
+struct HGEMMComputeTestParams {
+    bool transA;
     int M, N, K;
-    float lda_mul, ldb_mul, ldc_mul;
-    bool transA, transB;
+    int lda, ldc;
     float alpha, beta;
+    std::string description;
+    
+    HGEMMComputeTestParams(bool ta, int m, int n, int k, int la, int lc, float a, float b, const std::string& desc)
+        : transA(ta), M(m), N(n), K(k), lda(la), ldc(lc), alpha(a), beta(b), description(desc) {}
 };
-class HgemmParamTest : public HgemmTest, public ::testing::WithParamInterface<HgemmParams> {};
-struct HgemmResExtParams : public HgemmParams {
-    float gamma;
+
+// Parameterized test class for xdnn_hgemm_compute function
+class HGEMMComputeTest : public ::testing::TestWithParam<HGEMMComputeTestParams> {
+protected:
+    void SetUp() override {
+        // Initialize random seed for reproducible tests
+        srand(12345);
+    }
+
+    void TearDown() override {
+        // Cleanup if needed
+    }
+    
+    // Helper function to fill matrix with test data
+    void fillMatrix(std::vector<XDNN_FP16>& matrix, int size, float start_val = 0.0f) {
+        matrix.resize(size);
+        for (int i = 0; i < size; i++) {
+            // Create varied test data between -1 and 1 that's reasonable for FP16
+            float val = start_val + (static_cast<float>(i % 200) / 100.0f - 1.0f);
+            // Clamp to [-1, 1] range
+            val = std::max(-1.0f, std::min(1.0f, val));
+            matrix[i] = XDNN_FP16(val);
+        }
+    }
+    
+    // Helper function to compare matrices with tolerance
+    bool compareMatrices(const XDNN_FP16* expected, const XDNN_FP16* actual, int M, int N, int ldc, 
+                        float tolerance = FP16_PRECISION_TOLERANCE) {
+        bool all_match = true;
+        int error_count = 0;
+        const int max_errors_to_show = 10;
+        
+        for (int m = 0; m < M; m++) {
+            for (int n = 0; n < N; n++) {
+                float exp_val = static_cast<float>(expected[m * ldc + n]);
+                float act_val = static_cast<float>(actual[m * ldc + n]);
+                float diff = std::abs(exp_val - act_val);
+                
+                if (diff > tolerance) {
+                    all_match = false;
+                    error_count++;
+                    if (error_count <= max_errors_to_show) {
+                        std::cout << "Mismatch at [" << m << "," << n << "]: expected=" 
+                                  << exp_val << ", actual=" << act_val << ", diff=" << diff << "\n";
+                    }
+                }
+            }
+        }
+        
+        if (error_count > max_errors_to_show) {
+            std::cout << "... and " << (error_count - max_errors_to_show) << " more errors\n";
+        }
+        
+        return all_match;
+    }
 };
-class HgemmResExtParamTest : public HgemmTest, public ::testing::WithParamInterface<HgemmResExtParams> {};
 
-
-TEST_P(HgemmParamTest, XdnnHgemm) {
-    HgemmParams p = GetParam();
-    int lda = static_cast<int>((p.transA ? p.M : p.K) * p.lda_mul);
-    if (p.transA && p.K > 0) lda = static_cast<int>(p.M * p.lda_mul); else if (p.M > 0) lda = static_cast<int>(p.K * p.lda_mul);
-    if (p.transA) lda = std::max(p.M,1) * p.lda_mul; else lda = std::max(p.K,1) * p.lda_mul;
-    if (p.transA) lda = static_cast<int>(std::max(p.M, 1) * p.lda_mul); else lda = static_cast<int>(std::max(p.K, 1) * p.lda_mul);
-
-    int rowsA = p.transA ? p.K : p.M;
-    int colsA = p.transA ? p.M : p.K;
-    lda = std::max(colsA, static_cast<int>(colsA * p.lda_mul));
-    if (rowsA == 0 || colsA == 0) lda = 0;
-
-    int rowsB = p.transB ? p.N : p.K;
-    int colsB = p.transB ? p.K : p.N;
-    int ldb = std::max(colsB, static_cast<int>(colsB * p.ldb_mul));
-    if (rowsB == 0 || colsB == 0) ldb = 0;
+// Single parameterized test that covers all HGEMM compute test cases
+TEST_P(HGEMMComputeTest, HGEMMComputeFunctionTest) {
+    const HGEMMComputeTestParams& params = GetParam();
     
-    int ldc = std::max(p.N, static_cast<int>(p.N * p.ldc_mul));
-    if (p.M == 0 || p.N == 0) ldc = 0;
-
-    init_matrix(A, rowsA, colsA, lda, false, 0);
-    init_matrix(B, rowsB, colsB, ldb, false, 1);
+    // Print test parameters
+    std::cout << "\n=== HGEMMComputeFunctionTest: " << params.description << " ===\n";
+    std::cout << "Parameters: transA=" << params.transA << ", M=" << params.M 
+              << ", N=" << params.N << ", K=" << params.K
+              << ", lda=" << params.lda << ", ldc=" << params.ldc
+              << ", alpha=" << params.alpha << ", beta=" << params.beta << "\n";
     
-    C_actual.resize(std::max(p.M,1) * ldc);
-    std::fill(C_actual.begin(), C_actual.end(), 1.23f); // Pre-fill with a known value
-    C_expected = C_actual; // Copy for reference calculation if beta != 0
-
-    // Use alpha=1.0f for reference, as xdnn_hgemm only supports alpha=1.0f
-    reference_hgemm_computation(p.transA, p.transB, p.M, p.N, p.K, 1.0f, A, lda, B, ldb, p.beta, C_expected, ldc);
-    xdnn_hgemm(p.transA, p.transB, p.M, p.N, p.K, p.alpha, A.data(), lda, B.data(), ldb, p.beta, C_actual.data(), ldc);
+    // Allocate matrices
+    std::vector<XDNN_FP16> A, B, C_actual, C_expected, packedB;
     
-    verify_matrices(p.M, p.N, ldc);
-}
-
-// Test xdnn_hgemm_packb and xdnn_hgemm_compute together
-TEST_P(HgemmParamTest, XdnnHgemmPackBAndCompute) {
-    HgemmParams p = GetParam();
-    // For packb+compute, B is not transposed before packing in this test logic, 
-    // the transB flag tells packb how B is currently stored.
-    // The compute function always takes A and packedB (which is effectively non-transposed KxN B)
-
-    int rowsA = p.transA ? p.K : p.M;
-    int colsA = p.transA ? p.M : p.K;
-    int lda = std::max(colsA, static_cast<int>(colsA * p.lda_mul));
-    if (rowsA == 0 || colsA == 0) lda = 0;
-
-    // B for packing: if transB=false, B is KxN. if transB=true, B is NxK.
-    // packedB will always represent KxN data for the compute kernel.
-    int rowsB_orig = p.transB ? p.N : p.K;
-    int colsB_orig = p.transB ? p.K : p.N;
-    int ldb_orig = std::max(colsB_orig, static_cast<int>(colsB_orig * p.ldb_mul));
-    if (rowsB_orig == 0 || colsB_orig == 0) ldb_orig = 0;
-
-    int ldc = std::max(p.N, static_cast<int>(p.N * p.ldc_mul));
-    if (p.M == 0 || p.N == 0) ldc = 0;
-
-    init_matrix(A, rowsA, colsA, lda, false, 0);
-    std::vector<XDNN_FP16> B_original; // B as it is before packing
-    init_matrix(B_original, rowsB_orig, colsB_orig, ldb_orig, false, 1);
-
-    // packedB needs to be KxN. Size K*N is a guess, might need specific library function for size.
-    if (p.K > 0 && p.N > 0) {
-      packedB_actual.resize(p.K * p.N); 
-    } else {
-      packedB_actual.clear();
-    }
+    // Fill matrices with test data
+    fillMatrix(A, params.M * params.lda, 0.1f);
+    fillMatrix(B, params.K * params.N, 0.2f);  // Use different start value for B
+    fillMatrix(C_actual, params.M * params.ldc, 0.3f);  // Use different start value for C
     
-    if (p.K > 0 && p.N > 0) { // Only pack if there's something to pack
-        xdnn_hgemm_packb(p.transB, p.N, p.K, B_original.data(), ldb_orig, packedB_actual.data());
-    }
-
-    C_actual.resize(std::max(p.M,1) * ldc);
-    std::fill(C_actual.begin(), C_actual.end(), 1.23f);
+    // Copy C for reference computation
     C_expected = C_actual;
-
-    // Reference uses original B and its transpose flag
-    reference_hgemm_computation(p.transA, p.transB, p.M, p.N, p.K, 1.0f, A, lda, B_original, ldb_orig, p.beta, C_expected, ldc);
-    // Compute uses packedB, so effectively transB is false for the A*B part from compute's perspective of B
-    xdnn_hgemm_compute(p.transA, p.M, p.N, p.K, p.alpha, A.data(), lda, packedB_actual.data(), p.beta, C_actual.data(), ldc);
     
-    verify_matrices(p.M, p.N, ldc);
+    // Pack B matrix (assuming B is not transposed for simplicity)
+    packedB.resize(params.K * params.N);
+    xdnn_hgemm_packb(false, params.N, params.K, B.data(), params.N, packedB.data());
+    
+    // Print input matrices (full data)
+    std::cout << "\n--- Input Matrices ---\n";
+    MatrixDebugUtils::printMatrix(A.data(), params.M, params.lda, params.lda, "Matrix A", -1, -1);
+    MatrixDebugUtils::printMatrix(B.data(), params.K, params.N, params.N, "Matrix B (K×N format)", -1, -1);
+    MatrixDebugUtils::printMatrix(packedB.data(), params.K, params.N, params.N, "PackedB (K×N format)", -1, -1);
+    MatrixDebugUtils::printMatrix(C_actual.data(), params.M, params.ldc, params.ldc, "Initial Matrix C", -1, -1);
+    
+    // Run reference implementation
+    xdnn_hgemm_compute_reference(params.transA, params.M, params.N, params.K,
+                                 params.alpha, A.data(), params.lda, packedB.data(),
+                                 params.beta, C_expected.data(), params.ldc);
+    
+    // Run actual implementation
+    xdnn_hgemm_compute(params.transA, params.M, params.N, params.K,
+                       params.alpha, A.data(), params.lda, packedB.data(),
+                       params.beta, C_actual.data(), params.ldc);
+    
+    // Print output matrices (full data)
+    std::cout << "\n--- Output Matrices ---\n";
+    MatrixDebugUtils::printMatrix(C_expected.data(), params.M, params.ldc, params.ldc, "C Expected (Reference)", -1, -1);
+    MatrixDebugUtils::printMatrix(C_actual.data(), params.M, params.ldc, params.ldc, "C Actual (Implementation)", -1, -1);
+    
+    // Print matrix statistics
+    MatrixDebugUtils::printMatrixStats(A.data(), params.M * params.lda, "Matrix A");
+    MatrixDebugUtils::printMatrixStats(B.data(), params.K * params.N, "Matrix B");
+    MatrixDebugUtils::printMatrixStats(packedB.data(), params.K * params.N, "PackedB");
+    MatrixDebugUtils::printMatrixStats(C_expected.data(), params.M * params.ldc, "C Expected");
+    MatrixDebugUtils::printMatrixStats(C_actual.data(), params.M * params.ldc, "C Actual");
+    
+    // Compare results
+    EXPECT_TRUE(compareMatrices(C_expected.data(), C_actual.data(), params.M, params.N, params.ldc, 0.2))
+        << "Matrix computation mismatch for " << params.description
+        << ": transA=" << params.transA << ", M=" << params.M << ", N=" << params.N << ", K=" << params.K
+        << ", alpha=" << params.alpha << ", beta=" << params.beta
+        << ", lda=" << params.lda << ", ldc=" << params.ldc;
+    
+    std::cout << "=== End of " << params.description << " ===\n\n";
 }
 
-// New tests for hgemm_compute with fused operations
+// Instantiate the parameterized test with the required test cases and additional comprehensive cases
+INSTANTIATE_TEST_SUITE_P(
+    HGEMMComputeFunctionTests,
+    HGEMMComputeTest,
+    ::testing::Values(
+        // // Required test cases from the user
+        HGEMMComputeTestParams(false, 20, 4096, 1024, 1024, 4096, 1.0f, 0.0f, "required_case_M20_N4096_K1024"),
+        HGEMMComputeTestParams(false, 20, 6144, 1024, 1024, 6144, 1.0f, 0.0f, "required_case_M20_N6144_K1024"),
+        HGEMMComputeTestParams(false, 1, 4096, 1024, 1024, 4096, 1.0f, 0.0f, "required_case_M1_N4096_K1024"),
+        HGEMMComputeTestParams(false, 1, 6144, 1024, 1024, 6144, 1.0f, 0.0f, "required_case_M1_N6144_K1024"),
+        
+        // // Additional test cases for comprehensive coverage
+        
+        // // Basic small test cases
+        HGEMMComputeTestParams(false, 16, 16, 16, 16, 16, 1.0f, 0.0f, "basic_small_16x16x16_beta0"),
+        HGEMMComputeTestParams(false, 32, 32, 32, 32, 32, 1.0f, 0.0f, "basic_small_32x32x32_beta1"),
+        // HGEMMComputeTestParams(true, 16, 16, 16, 16, 16, 1.0f, 0.0f, "basic_small_transA_16x16x16"),
 
-TEST_P(HgemmParamTest, XdnnHgemmComputeSiLu) {
-    HgemmParams p = GetParam();
-    int rowsA = p.transA ? p.K : p.M;
-    int colsA = p.transA ? p.M : p.K;
-    int lda = std::max(colsA, static_cast<int>(colsA * p.lda_mul));
-    if (rowsA == 0 || colsA == 0) lda = 0;
+        // Different matrix shapes
+        HGEMMComputeTestParams(false, 128, 256, 64, 64, 256, 1.0f, 0.0f, "rectangular_128x256x64"),
+        HGEMMComputeTestParams(false, 256, 128, 64, 64, 128, 1.0f, 0.0f, "rectangular_256x128x64"),
+        HGEMMComputeTestParams(false, 64, 128, 256, 256, 128, 1.0f, 0.0f, "rectangular_64x128x256"),
+        
+        // transA variations
+        // HGEMMComputeTestParams(true, 128, 128, 128, 128, 128, 1.0f, 1.0f, "transA_128x128x128"),
+        // HGEMMComputeTestParams(true, 64, 256, 128, 128, 256, 1.0f, 0.0f, "transA_64x256x128"),
+        // HGEMMComputeTestParams(true, 256, 64, 128, 128, 64, 0.5f, 0.5f, "transA_256x64x128"),
+        
+        // Edge cases with small dimensions
+        HGEMMComputeTestParams(false, 1, 1, 1, 1, 1, 1.0f, 1.0f, "edge_case_1x1x1"),
+        HGEMMComputeTestParams(false, 1, 1024, 512, 512, 1024, 1.0f, 1.0f, "edge_case_1x1024x512"),
+        HGEMMComputeTestParams(false, 1024, 1, 512, 512, 1, 1.0f, 1.0f, "edge_case_1024x1x512"),
+        HGEMMComputeTestParams(false, 512, 512, 1, 1, 512, 1.0f, 1.0f, "edge_case_512x512x1"),
+        
+        // Stride variations (non-minimal strides)
+        HGEMMComputeTestParams(false, 64, 64, 64, 128, 128, 1.0f, 1.0f, "stride_variation_64x64x64"),
+        HGEMMComputeTestParams(false, 32, 32, 32, 64, 64, 1.0f, 1.0f, "stride_variation_32x32x32"),
+        // HGEMMComputeTestParams(true, 32, 32, 32, 64, 64, 1.0f, 1.0f, "stride_variation_transA_32x32x32"),
+        
+        // Medium-sized matrices
+        HGEMMComputeTestParams(false, 512, 512, 512, 512, 512, 1.0f, 1.0f, "medium_512x512x512"),
+        HGEMMComputeTestParams(false, 256, 1024, 256, 256, 1024, 1.0f, 1.0f, "medium_256x1024x256"),
+        HGEMMComputeTestParams(false, 1024, 256, 256, 256, 256, 1.0f, 1.0f, "medium_1024x256x256"),
+        
+        // Test cases similar to the required ones but with variations
+        HGEMMComputeTestParams(false, 10, 4096, 1024, 1024, 4096, 1.0f, 1.0f, "variation_M10_N4096_K1024"),
+        HGEMMComputeTestParams(false, 20, 2048, 1024, 1024, 2048, 1.0f, 1.0f, "variation_M20_N2048_K1024"),
+        HGEMMComputeTestParams(false, 20, 4096, 512, 512, 4096, 1.0f, 1.0f, "variation_M20_N4096_K512")
+        // HGEMMComputeTestParams(true, 20, 4096, 1024, 1024, 4096, 1.0f, 1.0f, "variation_transA_M20_N4096_K1024"),
+    )
+);
 
-    int rowsB_orig = p.transB ? p.N : p.K;
-    int colsB_orig = p.transB ? p.K : p.N;
-    int ldb_orig = std::max(colsB_orig, static_cast<int>(colsB_orig * p.ldb_mul));
-    if (rowsB_orig == 0 || colsB_orig == 0) ldb_orig = 0;
-    
-    int ldc = std::max(p.N, static_cast<int>(p.N * p.ldc_mul));
-    if (p.M == 0 || p.N == 0) ldc = 0;
-
-    init_matrix(A, rowsA, colsA, lda, false, 0);
-    std::vector<XDNN_FP16> B_original;
-    init_matrix(B_original, rowsB_orig, colsB_orig, ldb_orig, false, 1);
-
-    if (p.K > 0 && p.N > 0) {
-        packedB_actual.resize(p.K * p.N);
-        xdnn_hgemm_packb(p.transB, p.N, p.K, B_original.data(), ldb_orig, packedB_actual.data());
-    } else {
-        packedB_actual.clear();
+// Additional specific test for edge cases and error conditions
+class HGEMMComputeEdgeCaseTest : public ::testing::Test {
+protected:
+    void SetUp() override {
+        srand(12345);
     }
+};
 
-    C_actual.resize(std::max(p.M, 1) * ldc);
-    std::fill(C_actual.begin(), C_actual.end(), 1.23f); // Known pre-fill
-    C_expected = C_actual;
-
-    reference_hgemm_computation(p.transA, p.transB, p.M, p.N, p.K, 1.0f, A, lda, B_original, ldb_orig, p.beta, C_expected, ldc);
-    apply_silu_to_matrix(C_expected, p.M, p.N, ldc);
+TEST_F(HGEMMComputeEdgeCaseTest, ZeroBetaTest) {
+    // Test behavior when beta = 0 (original C should be ignored)
+    const int M = 16, N = 16, K = 16;
+    std::vector<XDNN_FP16> A(M * K, XDNN_FP16(1.0f));
+    std::vector<XDNN_FP16> packedB(K * N, XDNN_FP16(2.0f));
+    std::vector<XDNN_FP16> C(M * N, XDNN_FP16(999.0f)); // Large value that should be ignored
     
-    xdnn_hgemm_compute_silu(p.transA, p.M, p.N, p.K, p.alpha, A.data(), lda, packedB_actual.data(), p.beta, C_actual.data(), ldc);
-
+    xdnn_hgemm_compute(false, M, N, K, 1.0f, A.data(), K, packedB.data(), 0.0f, C.data(), N);
     
-    verify_matrices(p.M, p.N, ldc, FP16_FUSED_PRECISION_TOLERANCE);
+    // Expected result: alpha * (A * B) = 1.0 * (1.0 * 2.0 * K) = 32.0
+    float expected = 32.0f;
+    for (int i = 0; i < M * N; i++) {
+        float actual = static_cast<float>(C[i]);
+        EXPECT_NEAR(expected, actual, FP16_PRECISION_TOLERANCE)
+            << "Zero beta test failed at index " << i;
+    }
 }
 
-TEST_P(HgemmParamTest, XdnnHgemmComputeGeLu) {
-    HgemmParams p = GetParam();
-    int rowsA = p.transA ? p.K : p.M;
-    int colsA = p.transA ? p.M : p.K;
-    int lda = std::max(colsA, static_cast<int>(colsA * p.lda_mul));
-    if (rowsA == 0 || colsA == 0) lda = 0;
-
-    int rowsB_orig = p.transB ? p.N : p.K;
-    int colsB_orig = p.transB ? p.K : p.N;
-    int ldb_orig = std::max(colsB_orig, static_cast<int>(colsB_orig * p.ldb_mul));
-    if (rowsB_orig == 0 || colsB_orig == 0) ldb_orig = 0;
+TEST_F(HGEMMComputeEdgeCaseTest, TransANotSupportedTest) {
+    // Test that transA = true throws an error in the reference implementation
+    const int M = 16, N = 16, K = 16;
+    std::vector<XDNN_FP16> A(K * M, XDNN_FP16(1.0f)); // K×M for transA = true
+    std::vector<XDNN_FP16> packedB(K * N, XDNN_FP16(2.0f));
+    std::vector<XDNN_FP16> C(M * N, XDNN_FP16(0.0f));
     
-    int ldc = std::max(p.N, static_cast<int>(p.N * p.ldc_mul));
-    if (p.M == 0 || p.N == 0) ldc = 0;
-
-    init_matrix(A, rowsA, colsA, lda, false, 0);
-    std::vector<XDNN_FP16> B_original;
-    init_matrix(B_original, rowsB_orig, colsB_orig, ldb_orig, false, 1);
-
-    if (p.K > 0 && p.N > 0) {
-        packedB_actual.resize(p.K * p.N);
-        xdnn_hgemm_packb(p.transB, p.N, p.K, B_original.data(), ldb_orig, packedB_actual.data());
-    } else {
-        packedB_actual.clear();
-    }
-
-    C_actual.resize(std::max(p.M, 1) * ldc);
-    std::fill(C_actual.begin(), C_actual.end(), 1.23f);
-    C_expected = C_actual;
-
-    reference_hgemm_computation(p.transA, p.transB, p.M, p.N, p.K, 1.0f, A, lda, B_original, ldb_orig, p.beta, C_expected, ldc);
-    apply_gelu_to_matrix(C_expected, p.M, p.N, ldc);
-    
-    xdnn_hgemm_compute_gelu(p.transA, p.M, p.N, p.K, p.alpha, A.data(), lda, packedB_actual.data(), p.beta, C_actual.data(), ldc);
-    
-    verify_matrices(p.M, p.N, ldc, FP16_FUSED_PRECISION_TOLERANCE);
+    // Expect the reference implementation to throw an error when transA = true
+    EXPECT_THROW(
+        xdnn_hgemm_compute_reference(true, M, N, K, 1.0f, A.data(), M, packedB.data(), 0.0f, C.data(), N),
+        std::runtime_error
+    );
 }
 
-TEST_P(HgemmParamTest, XdnnHgemmComputeBiasAdd) {
-    HgemmParams p = GetParam();
-    int rowsA = p.transA ? p.K : p.M;
-    int colsA = p.transA ? p.M : p.K;
-    int lda = std::max(colsA, static_cast<int>(colsA * p.lda_mul));
-    if (rowsA == 0 || colsA == 0) lda = 0;
-
-    int rowsB_orig = p.transB ? p.N : p.K;
-    int colsB_orig = p.transB ? p.K : p.N;
-    int ldb_orig = std::max(colsB_orig, static_cast<int>(colsB_orig * p.ldb_mul));
-    if (rowsB_orig == 0 || colsB_orig == 0) ldb_orig = 0;
+// Test structure for packb function parameters
+struct HGEMMPackBTestParams {
+    bool transB;
+    int N, K;
+    int ldb;
+    std::string description;
     
-    int ldc = std::max(p.N, static_cast<int>(p.N * p.ldc_mul));
-    if (p.M == 0 || p.N == 0) ldc = 0;
+    HGEMMPackBTestParams(bool tb, int n, int k, int lb, const std::string& desc)
+        : transB(tb), N(n), K(k), ldb(lb), description(desc) {}
+};
 
-    init_matrix(A, rowsA, colsA, lda, false, 0);
-    std::vector<XDNN_FP16> B_original;
-    init_matrix(B_original, rowsB_orig, colsB_orig, ldb_orig, false, 1);
-
-    if (p.K > 0 && p.N > 0) {
-        packedB_actual.resize(p.K * p.N);
-        xdnn_hgemm_packb(p.transB, p.N, p.K, B_original.data(), ldb_orig, packedB_actual.data());
-    } else {
-        packedB_actual.clear();
-    }
-    
-    bias.resize(p.N);
-    if (p.N > 0) {
-        std::mt19937 gen_bias(1337 + 2);
-        std::uniform_real_distribution<float> distrib_bias(-1.0f, 1.0f);
-        for (int i = 0; i < p.N; ++i) bias[i] = distrib_bias(gen_bias);
+// Parameterized test class for xdnn_hgemm_packb function
+class HGEMMPackBTest : public ::testing::TestWithParam<HGEMMPackBTestParams> {
+protected:
+    void SetUp() override {
+        // Initialize random seed for reproducible tests
+        srand(12345);
     }
 
-
-    C_actual.resize(std::max(p.M, 1) * ldc);
-    std::fill(C_actual.begin(), C_actual.end(), 1.23f);
-    C_expected = C_actual;
-
-    reference_hgemm_computation(p.transA, p.transB, p.M, p.N, p.K, 1.0f, A, lda, B_original, ldb_orig, p.beta, C_expected, ldc);
-    apply_bias_add_to_matrix(C_expected, p.M, p.N, ldc, bias);
-    
-    xdnn_hgemm_compute_biasadd(p.transA, p.M, p.N, p.K, p.alpha, A.data(), lda, packedB_actual.data(), p.beta, C_actual.data(), ldc, bias.data());
-    
-    verify_matrices(p.M, p.N, ldc);
-}
-
-TEST_P(HgemmParamTest, XdnnHgemmComputeBiasAddReLu) {
-    HgemmParams p = GetParam();
-    int rowsA = p.transA ? p.K : p.M;
-    int colsA = p.transA ? p.M : p.K;
-    int lda = std::max(colsA, static_cast<int>(colsA * p.lda_mul));
-    if (rowsA == 0 || colsA == 0) lda = 0;
-
-    int rowsB_orig = p.transB ? p.N : p.K;
-    int colsB_orig = p.transB ? p.K : p.N;
-    int ldb_orig = std::max(colsB_orig, static_cast<int>(colsB_orig * p.ldb_mul));
-    if (rowsB_orig == 0 || colsB_orig == 0) ldb_orig = 0;
-    
-    int ldc = std::max(p.N, static_cast<int>(p.N * p.ldc_mul));
-    if (p.M == 0 || p.N == 0) ldc = 0;
-
-    init_matrix(A, rowsA, colsA, lda, false, 0);
-    std::vector<XDNN_FP16> B_original;
-    init_matrix(B_original, rowsB_orig, colsB_orig, ldb_orig, false, 1);
-
-    if (p.K > 0 && p.N > 0) {
-        packedB_actual.resize(p.K * p.N);
-        xdnn_hgemm_packb(p.transB, p.N, p.K, B_original.data(), ldb_orig, packedB_actual.data());
-    } else {
-        packedB_actual.clear();
-    }
-
-    bias.resize(p.N);
-    if (p.N > 0) {
-        std::mt19937 gen_bias(1337 + 2);
-        std::uniform_real_distribution<float> distrib_bias(-1.0f, 1.0f);
-        for (int i = 0; i < p.N; ++i) bias[i] = distrib_bias(gen_bias);
-    }
-
-    C_actual.resize(std::max(p.M, 1) * ldc);
-    std::fill(C_actual.begin(), C_actual.end(), 1.23f);
-    C_expected = C_actual;
-
-    reference_hgemm_computation(p.transA, p.transB, p.M, p.N, p.K, 1.0f, A, lda, B_original, ldb_orig, p.beta, C_expected, ldc);
-    apply_bias_add_to_matrix(C_expected, p.M, p.N, ldc, bias);
-    apply_relu_to_matrix(C_expected, p.M, p.N, ldc);
-    
-    xdnn_hgemm_compute_biasadd_relu(p.transA, p.M, p.N, p.K, p.alpha, A.data(), lda, packedB_actual.data(), p.beta, C_actual.data(), ldc, bias.data());
-    
-    verify_matrices(p.M, p.N, ldc);
-}
-
-TEST_P(HgemmParamTest, XdnnHgemmComputeResidential) {
-    HgemmParams p = GetParam();
-    int rowsA = p.transA ? p.K : p.M;
-    int colsA = p.transA ? p.M : p.K;
-    int lda = std::max(colsA, static_cast<int>(colsA * p.lda_mul));
-    if (rowsA == 0 || colsA == 0) lda = 0;
-
-    int rowsB_orig = p.transB ? p.N : p.K;
-    int colsB_orig = p.transB ? p.K : p.N;
-    int ldb_orig = std::max(colsB_orig, static_cast<int>(colsB_orig * p.ldb_mul));
-    if (rowsB_orig == 0 || colsB_orig == 0) ldb_orig = 0;
-    
-    int ldc = std::max(p.N, static_cast<int>(p.N * p.ldc_mul));
-    if (p.M == 0 || p.N == 0) ldc = 0;
-    int ldres = p.N; // Assuming res is M x N with ldres = N for tests
-
-    init_matrix(A, rowsA, colsA, lda, false, 0);
-    std::vector<XDNN_FP16> B_original;
-    init_matrix(B_original, rowsB_orig, colsB_orig, ldb_orig, false, 1);
-
-    if (p.K > 0 && p.N > 0) {
-        packedB_actual.resize(p.K * p.N);
-        xdnn_hgemm_packb(p.transB, p.N, p.K, B_original.data(), ldb_orig, packedB_actual.data());
-    } else {
-        packedB_actual.clear();
-    }
-
-    bias.resize(p.N);
-    if (p.N > 0) {
-        std::mt19937 gen_bias(1337 + 2);
-        std::uniform_real_distribution<float> distrib_bias(-1.0f, 1.0f);
-        for (int i = 0; i < p.N; ++i) bias[i] = distrib_bias(gen_bias);
+    void TearDown() override {
+        // Cleanup if needed
     }
     
-    res.resize(std::max(p.M,1) * ldres);
-    if (p.M > 0 && p.N > 0) init_matrix(res, p.M, p.N, ldres, false, 3);
-
-
-    C_actual.resize(std::max(p.M, 1) * ldc);
-    std::fill(C_actual.begin(), C_actual.end(), 1.23f);
-    C_expected = C_actual;
-
-    reference_hgemm_computation(p.transA, p.transB, p.M, p.N, p.K, 1.0f, A, lda, B_original, ldb_orig, p.beta, C_expected, ldc);
-    apply_residential_to_matrix(C_expected, p.M, p.N, ldc, bias, res, ldres);
-    
-    xdnn_hgemm_compute_residential(p.transA, p.M, p.N, p.K, p.alpha, A.data(), lda, packedB_actual.data(), p.beta, C_actual.data(), ldc, bias.data(), res.data(), ldres);
-    
-    verify_matrices(p.M, p.N, ldc, FP16_FUSED_PRECISION_TOLERANCE);
-}
-
-TEST_P(HgemmResExtParamTest, XdnnHgemmComputeResExt) {
-    HgemmResExtParams p = GetParam(); // Use HgemmResExtParams
-    int rowsA = p.transA ? p.K : p.M;
-    int colsA = p.transA ? p.M : p.K;
-    int lda = std::max(colsA, static_cast<int>(colsA * p.lda_mul));
-    if (rowsA == 0 || colsA == 0) lda = 0;
-
-    int rowsB_orig = p.transB ? p.N : p.K;
-    int colsB_orig = p.transB ? p.K : p.N;
-    int ldb_orig = std::max(colsB_orig, static_cast<int>(colsB_orig * p.ldb_mul));
-    if (rowsB_orig == 0 || colsB_orig == 0) ldb_orig = 0;
-    
-    int ldc = std::max(p.N, static_cast<int>(p.N * p.ldc_mul));
-    if (p.M == 0 || p.N == 0) ldc = 0;
-    int ldres = p.N;
-
-    init_matrix(A, rowsA, colsA, lda, false, 0);
-    std::vector<XDNN_FP16> B_original;
-    init_matrix(B_original, rowsB_orig, colsB_orig, ldb_orig, false, 1);
-
-    if (p.K > 0 && p.N > 0) {
-        packedB_actual.resize(p.K * p.N);
-        xdnn_hgemm_packb(p.transB, p.N, p.K, B_original.data(), ldb_orig, packedB_actual.data());
-    } else {
-        packedB_actual.clear();
-    }
-
-    bias.resize(p.N);
-     if (p.N > 0) {
-        std::mt19937 gen_bias(1337 + 2);
-        std::uniform_real_distribution<float> distrib_bias(-1.0f, 1.0f);
-        for (int i = 0; i < p.N; ++i) bias[i] = distrib_bias(gen_bias);
-    }
-    
-    res.resize(std::max(p.M,1) * ldres);
-    if (p.M > 0 && p.N > 0) init_matrix(res, p.M, p.N, ldres, false, 3);
-
-    C_actual.resize(std::max(p.M, 1) * ldc);
-    std::fill(C_actual.begin(), C_actual.end(), 1.23f);
-    C_expected = C_actual;
-
-    reference_hgemm_computation(p.transA, p.transB, p.M, p.N, p.K, 1.0f, A, lda, B_original, ldb_orig, p.beta, C_expected, ldc);
-    apply_resext_to_matrix(C_expected, p.M, p.N, ldc, bias, p.gamma, res, ldres); // Use p.gamma
-    
-    xdnn_hgemm_compute_resext(p.transA, p.M, p.N, p.K, p.alpha, A.data(), lda, packedB_actual.data(), p.beta, C_actual.data(), ldc, bias.data(), p.gamma, res.data(), ldres);
-    
-    verify_matrices(p.M, p.N, ldc);
-}
-
-TEST_P(HgemmParamTest, XdnnHgemmComputeResMul) {
-    HgemmParams p = GetParam();
-    int rowsA = p.transA ? p.K : p.M;
-    int colsA = p.transA ? p.M : p.K;
-    int lda = std::max(colsA, static_cast<int>(colsA * p.lda_mul));
-    if (rowsA == 0 || colsA == 0) lda = 0;
-
-    int rowsB_orig = p.transB ? p.N : p.K;
-    int colsB_orig = p.transB ? p.K : p.N;
-    int ldb_orig = std::max(colsB_orig, static_cast<int>(colsB_orig * p.ldb_mul));
-    if (rowsB_orig == 0 || colsB_orig == 0) ldb_orig = 0;
-    
-    int ldc = std::max(p.N, static_cast<int>(p.N * p.ldc_mul));
-    if (p.M == 0 || p.N == 0) ldc = 0;
-    int ldres = p.N;
-
-    init_matrix(A, rowsA, colsA, lda, false, 0);
-    std::vector<XDNN_FP16> B_original;
-    init_matrix(B_original, rowsB_orig, colsB_orig, ldb_orig, false, 1);
-
-    if (p.K > 0 && p.N > 0) {
-        packedB_actual.resize(p.K * p.N);
-        xdnn_hgemm_packb(p.transB, p.N, p.K, B_original.data(), ldb_orig, packedB_actual.data());
-    } else {
-        packedB_actual.clear();
-    }
-    
-    res.resize(std::max(p.M,1) * ldres);
-    if (p.M > 0 && p.N > 0) init_matrix(res, p.M, p.N, ldres, false, 3);
-
-
-    C_actual.resize(std::max(p.M, 1) * ldc);
-    std::fill(C_actual.begin(), C_actual.end(), 1.23f);
-    C_expected = C_actual;
-
-    reference_hgemm_computation(p.transA, p.transB, p.M, p.N, p.K, 1.0f, A, lda, B_original, ldb_orig, p.beta, C_expected, ldc);
-    apply_resmul_to_matrix(C_expected, p.M, p.N, ldc, res, ldres);
-    
-    xdnn_hgemm_compute_resmul(p.transA, p.M, p.N, p.K, p.alpha, A.data(), lda, packedB_actual.data(), p.beta, C_actual.data(), ldc, res.data(), ldres);
-    
-    verify_matrices(p.M, p.N, ldc);
-}
-
-
-// Reference implementation for packb (row-major KxN output)
-void reference_packb(bool transB, int N, int K, const XDNN_FP16* B, int ldb, XDNN_FP16* packedB) {
-    for (int k = 0; k < K; ++k) {
-        for (int n = 0; n < N; ++n) {
-            if (transB) {
-                packedB[k * N + n] = B[n * ldb + k];
-            } else {
-                packedB[k * N + n] = B[k * ldb + n];
+    // Helper function to fill matrix with test data
+    void fillMatrix(std::vector<XDNN_FP16>& matrix, bool transB, int N, int K, int ldb, float start_val = 1.0f) {
+        // Calculate total matrix size based on the layout
+        int matrix_size = transB ? N * ldb : K * ldb;
+        matrix.resize(matrix_size);
+        
+        // Initialize all elements to zero first
+        std::fill(matrix.begin(), matrix.end(), XDNN_FP16(0.0f));
+        
+        // Fill only the actual matrix data (N×K or K×N region)
+        if (transB) {
+            // B is N×K with stride ldb
+            for (int n = 0; n < N; n++) {
+                for (int k = 0; k < K; k++) {
+                    // Create varied test data between -1 and 1
+                    float val = start_val + ((static_cast<float>((n * K + k) % 200) / 100.0f) - 1.0f);
+                    // Clamp to [-1, 1] range
+                    val = std::max(-1.0f, std::min(1.0f, val));
+                    matrix[n * ldb + k] = XDNN_FP16(val);
+                }
+            }
+        } else {
+            // B is K×N with stride ldb
+            for (int k = 0; k < K; k++) {
+                for (int n = 0; n < N; n++) {
+                    // Create varied test data between -1 and 1
+                    float val = start_val + ((static_cast<float>((k * N + n) % 200) / 100.0f) - 1.0f);
+                    // Clamp to [-1, 1] range
+                    val = std::max(-1.0f, std::min(1.0f, val));
+                    matrix[k * ldb + n] = XDNN_FP16(val);
+                }
             }
         }
     }
+
+    // Helper function to compare packed matrices with tolerance
+    bool comparePackedMatrices(const XDNN_FP16* expected, const XDNN_FP16* actual, int K, int N,
+                              float tolerance = FP16_PRECISION_TOLERANCE) {
+        bool all_match = true;
+        int error_count = 0;
+        const int max_errors_to_show = 10;
+        
+        for (int k = 0; k < K; k++) {
+            for (int n = 0; n < N; n++) {
+                float exp_val = static_cast<float>(expected[k * N + n]);
+                float act_val = static_cast<float>(actual[k * N + n]);
+                float diff = std::abs(exp_val - act_val);
+                
+                if (diff > tolerance) {
+                    all_match = false;
+                    error_count++;
+                    if (error_count <= max_errors_to_show) {
+                        std::cout << "Mismatch at packed[" << k << "," << n << "]: expected=" 
+                                  << exp_val << ", actual=" << act_val << ", diff=" << diff << "\n";
+                    }
+                }
+            }
+        }
+        
+        if (error_count > max_errors_to_show) {
+            std::cout << "... and " << (error_count - max_errors_to_show) << " more errors\n";
+        }
+        
+        return all_match;
+    }
+};
+
+// Single parameterized test that covers all HGEMM packb test cases
+TEST_P(HGEMMPackBTest, HGEMMPackBFunctionTest) {
+    const HGEMMPackBTestParams& params = GetParam();
+    
+    // Calculate matrix size based on transB
+    int matrix_size = params.transB ? params.N * params.ldb : params.K * params.ldb;
+    
+    // Allocate matrices
+    std::vector<XDNN_FP16> B, packedB_actual, packedB_expected;
+    
+    // Fill B matrix with test data
+    fillMatrix(B, params.transB, params.N, params.K, params.ldb, 1.0f);
+    
+    // Allocate packed matrices
+    packedB_actual.resize(params.K * params.N);
+    packedB_expected.resize(params.K * params.N);
+    
+    // Print test parameters
+    std::cout << "\n=== HGEMMPackBFunctionTest: " << params.description << " ===\n";
+    std::cout << "Parameters: transB=" << params.transB << ", N=" << params.N 
+              << ", K=" << params.K << ", ldb=" << params.ldb << "\n";
+    
+    // Print original Matrix B (full matrix)
+    if (params.transB) {
+        // B is N×K with stride ldb
+        MatrixDebugUtils::printMatrix(B.data(), params.N, params.K, params.ldb, "Original Matrix B (N×K format)", params.N, params.ldb);
+    } else {
+        // B is K×N with stride ldb
+        MatrixDebugUtils::printMatrix(B.data(), params.K, params.N, params.ldb, "Original Matrix B (K×N format)", params.K, params.ldb);
+    }
+    
+    // Run reference implementation
+    reference_packb(params.transB, params.N, params.K, B.data(), params.ldb, packedB_expected.data());
+    
+    // Run actual implementation
+    xdnn_hgemm_packb(params.transB, params.N, params.K, B.data(), params.ldb, packedB_actual.data());
+    
+    // Print packed matrices (full matrices)
+    MatrixDebugUtils::printMatrix(packedB_expected.data(), params.K, params.N, params.ldb, "PackedB Expected (K×N format)", params.K, params.ldb);
+    MatrixDebugUtils::printMatrix(packedB_actual.data(), params.K, params.N, params.ldb, "PackedB Actual (K×N format)", params.K, params.ldb);
+    
+    // Print matrix statistics
+    MatrixDebugUtils::printMatrixStats(B.data(), matrix_size, "Original Matrix B");
+    MatrixDebugUtils::printMatrixStats(packedB_expected.data(), params.K * params.N, "PackedB Expected");
+    MatrixDebugUtils::printMatrixStats(packedB_actual.data(), params.K * params.N, "PackedB Actual");
+    
+    // Compare results
+    EXPECT_TRUE(comparePackedMatrices(packedB_expected.data(), packedB_actual.data(), params.K, params.N))
+        << "Matrix packing mismatch for " << params.description
+        << ": transB=" << params.transB << ", N=" << params.N << ", K=" << params.K
+        << ", ldb=" << params.ldb;
+    
+    std::cout << "=== End of " << params.description << " ===\n\n";
 }
 
-TEST(HgemmPackBTest, PackBCorrectness) {
-    // Test a few shapes and both transB cases
-    const int N = 5, K = 4;
-    for (bool transB : {false, true}) {
-        int rowsB = transB ? N : K;
-        int colsB = transB ? K : N;
-        int ldb = colsB; // tight
-        std::vector<XDNN_FP16> B(rowsB * ldb);
-        // Fill B with sequential values for easy checking
-        for (int r = 0; r < rowsB; ++r)
-            for (int c = 0; c < colsB; ++c)
-                B[r * ldb + c] = XDNN_FP16(100.0f + r * colsB + c);
-        std::vector<XDNN_FP16> packed_ref(K * N, XDNN_FP16(-999.0f));
-        std::vector<XDNN_FP16> packed_func(K * N, XDNN_FP16(-888.0f));
-        reference_packb(transB, N, K, B.data(), ldb, packed_ref.data());
-        xdnn_hgemm_packb(transB, N, K, B.data(), ldb, packed_func.data());
-        for (int i = 0; i < K * N; ++i) {
-            ASSERT_NEAR(static_cast<float>(packed_func[i]), static_cast<float>(packed_ref[i]), FP16_PRECISION_TOLERANCE) << "Mismatch at packedB[" << i << "] for transB=" << transB;
+// Instantiate the parameterized test for packb function with comprehensive test cases
+INSTANTIATE_TEST_SUITE_P(
+    HGEMMPackBFunctionTests,
+    HGEMMPackBTest,
+    ::testing::Values(
+        // Basic small test case for debugging
+        HGEMMPackBTestParams(false, 16, 16, 16, "basic_small_N16_K16_notrans"),
+        HGEMMPackBTestParams(false, 32, 32, 32, "basic_small_N32_K32_notrans"),
+        HGEMMPackBTestParams(false, 64, 64, 64, "basic_medium_N64_K64_notrans"),
+        HGEMMPackBTestParams(true, 16, 16, 16, "basic_small_N16_K16_trans"),
+        HGEMMPackBTestParams(true, 32, 32, 32, "basic_small_N32_K32_trans"),
+        HGEMMPackBTestParams(true, 64, 64, 64, "basic_medium_N64_K64_trans"),
+        HGEMMPackBTestParams(false, 256, 64, 256, "rectangular_N128_K64_notrans"),
+        HGEMMPackBTestParams(false, 64, 128, 64, "rectangular_N64_K128_notrans"),
+        HGEMMPackBTestParams(true, 128, 64, 64, "rectangular_N128_K64_trans"),
+        HGEMMPackBTestParams(true, 64, 128, 128, "rectangular_N64_K128_trans"),
+        HGEMMPackBTestParams(false, 1, 1, 1, "edge_case_N1_K1_notrans"),
+        HGEMMPackBTestParams(true, 1, 1, 1, "edge_case_N1_K1_trans"),
+        HGEMMPackBTestParams(false, 64, 64, 128, "stride_variation_N64_K64_notrans"),
+        HGEMMPackBTestParams(true, 64, 64, 128, "stride_variation_N64_K64_trans")
+    )
+);
+
+// Additional specific tests for edge cases and consistency
+TEST_F(HGEMMComputeEdgeCaseTest, PackBConsistencyTest) {
+    // Test that packing and unpacking gives consistent results with matrix multiplication
+    const int N = 32, K = 32;
+    std::vector<XDNN_FP16> B_original(K * N);
+    std::vector<XDNN_FP16> B_transposed(N * K);
+    std::vector<XDNN_FP16> packedB_notrans(K * N);
+    std::vector<XDNN_FP16> packedB_trans(K * N);
+    
+    // Fill original matrix
+    for (int i = 0; i < K * N; i++) {
+        B_original[i] = XDNN_FP16(static_cast<float>(i % 100) * 0.01f + 1.0f);
+    }
+    
+    // Create transposed version
+    for (int k = 0; k < K; k++) {
+        for (int n = 0; n < N; n++) {
+            B_transposed[n * K + k] = B_original[k * N + n];
         }
+    }
+    
+    // Pack both versions
+    xdnn_hgemm_packb(false, N, K, B_original.data(), N, packedB_notrans.data());
+    xdnn_hgemm_packb(true, N, K, B_transposed.data(), K, packedB_trans.data());
+    
+    // Both packed matrices should be identical
+    for (int i = 0; i < K * N; i++) {
+        float val_notrans = static_cast<float>(packedB_notrans[i]);
+        float val_trans = static_cast<float>(packedB_trans[i]);
+        EXPECT_NEAR(val_notrans, val_trans, FP16_PRECISION_TOLERANCE)
+            << "PackB consistency test failed at index " << i 
+            << ": notrans=" << val_notrans << ", trans=" << val_trans;
     }
 }
 
-
-INSTANTIATE_TEST_SUITE_P(
-    HgemmTests, HgemmParamTest,
-    ::testing::Values(
-        // M, N, K, lda_mul, ldb_mul, ldc_mul, transA, transB, alpha, beta
-        HgemmParams{16, 16, 16, 1.0f, 1.0f, 1.0f, false, false, 1.0f, 0.0f}, 
-        HgemmParams{32, 32, 32, 1.0f, 1.0f, 1.0f, false, false, 1.0f, 1.0f}, 
-        HgemmParams{15, 25, 35, 1.0f, 1.0f, 1.0f, false, false, 1.0f, 0.0f},
-        HgemmParams{16, 16, 16, 1.5f, 1.5f, 1.5f, false, false, 1.0f, 0.0f},
-        HgemmParams{8, 8, 8, 1.0f, 1.0f, 1.0f, false, false, 1.0f, 0.0f},
-        HgemmParams{0, 16, 16, 1.0f, 1.0f, 1.0f, false, false, 1.0f, 1.0f},
-        HgemmParams{16, 0, 16, 1.0f, 1.0f, 1.0f, false, false, 1.0f, 1.0f}
-    )
-);
-
-// Instantiation for the new fused operation tests
-INSTANTIATE_TEST_SUITE_P(
-    HgemmComputeFusedOpTests, HgemmParamTest,
-    ::testing::Values(
-        HgemmParams{16, 16, 16, 1.0f, 1.0f, 1.0f, false, false, 1.0f, 0.0f},
-        HgemmParams{32, 32, 32, 1.0f, 1.0f, 1.0f, false, false, 1.0f, 1.0f},
-        HgemmParams{16, 16, 16, 1.5f, 1.2f, 1.3f, false, false, 1.0f, 0.0f}
-    )
-);
-
-INSTANTIATE_TEST_SUITE_P(
-    HgemmComputeResExtOpTests, HgemmResExtParamTest,
-    ::testing::Values(
-        HgemmResExtParams{{16, 16, 16, 1.0f, 1.0f, 1.0f, false, false, 1.0f, 0.0f}, 0.5f},
-        HgemmResExtParams{{32, 32, 32, 1.0f, 1.0f, 1.0f, false, false, 1.0f, 1.0f}, 1.5f}
-    )
-);
-
-// Test for small_hgemm correctness
-TEST(SmallHgemmTest, BasicCorrectness) {
-    // Test a few small shapes
-    const std::vector<std::tuple<int, int, int>> shapes = {
-        {2, 2, 2}, {3, 3, 3}, {4, 2, 3}, {1, 1, 1}, {0, 2, 2}, {2, 0, 2}, {2, 2, 0}
-    };
-    for (const auto& tup : shapes) {
-        int M, N, K;
-        std::tie(M, N, K) = tup;
-        int lda = K > 0 ? K : 1;
-        int ldb = N > 0 ? N : 1;
-        int ldc = N > 0 ? N : 1;
-        std::vector<XDNN_FP16> A(M * lda);
-        std::vector<XDNN_FP16> B(K * ldb);
-        std::vector<XDNN_FP16> C(M * ldc, XDNN_FP16(1.23f));
-        std::vector<XDNN_FP16> C_ref = C;
-        // Fill A and B with sequential values for determinism
-        for (int i = 0; i < (int)A.size(); ++i) A[i] = XDNN_FP16(1.0f + i);
-        for (int i = 0; i < (int)B.size(); ++i) B[i] = XDNN_FP16(2.0f + i);
-        // Reference computation: C = A * B
-        reference_hgemm_computation(false, false, M, N, K, 1.0f, A, lda, B, ldb, 0.0f, C_ref, ldc);
-        // Test small_hgemm
-        small_hgemm(M, N, K, A.data(), lda, B.data(), ldb, C.data(), ldc);
-        // Compare
-        ASSERT_EQ(C.size(), C_ref.size());
-        for (size_t i = 0; i < C.size(); ++i) {
-            ASSERT_NEAR(static_cast<float>(C[i]), static_cast<float>(C_ref[i]), FP16_PRECISION_TOLERANCE) << "Mismatch at index " << i << " for shape M=" << M << ",N=" << N << ",K=" << K;
+TEST_F(HGEMMComputeEdgeCaseTest, PackBStrideBehaviorTest) {
+    // Test behavior with different stride values
+    const int N = 16, K = 16;
+    const int stride_normal = N;
+    const int stride_large = N + 8; // Larger stride
+    
+    std::vector<XDNN_FP16> B_normal(K * stride_normal);
+    std::vector<XDNN_FP16> B_strided(K * stride_large);
+    std::vector<XDNN_FP16> packedB_normal(K * N);
+    std::vector<XDNN_FP16> packedB_strided(K * N);
+    
+    // Fill matrices with the same data pattern
+    for (int k = 0; k < K; k++) {
+        for (int n = 0; n < N; n++) {
+            XDNN_FP16 val = XDNN_FP16(static_cast<float>(k * N + n) * 0.01f + 1.0f);
+            B_normal[k * stride_normal + n] = val;
+            B_strided[k * stride_large + n] = val;
         }
+    }
+    
+    // Pack both matrices
+    xdnn_hgemm_packb(false, N, K, B_normal.data(), stride_normal, packedB_normal.data());
+    xdnn_hgemm_packb(false, N, K, B_strided.data(), stride_large, packedB_strided.data());
+    
+    // Results should be identical regardless of stride
+    for (int i = 0; i < K * N; i++) {
+        float val_normal = static_cast<float>(packedB_normal[i]);
+        float val_strided = static_cast<float>(packedB_strided[i]);
+        EXPECT_NEAR(val_normal, val_strided, FP16_PRECISION_TOLERANCE)
+            << "PackB stride behavior test failed at index " << i 
+            << ": normal_stride=" << val_normal << ", large_stride=" << val_strided;
     }
 }

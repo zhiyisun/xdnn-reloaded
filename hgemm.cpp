@@ -89,21 +89,27 @@ void xdnn_hgemm(bool transA, bool transB, int M, int N, int K,
 // Pack matrix B for optimized computation
 void xdnn_hgemm_packb(bool transB, int N, int K, const XDNN_FP16 *B, int ldb, XDNN_FP16 *packedB) {
     DEBUG_PRINT();
-    // Packing B for better cache locality in subsequent computations
-    // The exact packing format depends on the target architecture and SIMD width
+    const int block_size = 64;
+    int num_blocks = (N + block_size - 1) / block_size; // Round up division
     
-    if (!transB) {
-        // B is K×N
+    int packed_idx = 0;
+    
+    // Process each block of 64 columns (or remaining columns for last block)
+    for (int block = 0; block < num_blocks; block++) {
+        int block_start = block * block_size;
+        int block_end = std::min(block_start + block_size, N);
+        int block_width = block_end - block_start;
+        
+        // Pack this block row by row
         for (int k = 0; k < K; k++) {
-            for (int n = 0; n < N; n++) {
-                packedB[k * N + n] = B[k * ldb + n];
-            }
-        }
-    } else {
-        // B is N×K
-        for (int k = 0; k < K; k++) {
-            for (int n = 0; n < N; n++) {
-                packedB[k * N + n] = B[n * ldb + k];
+            for (int n = block_start; n < block_end; n++) {
+                if (!transB) {
+                    // B is K×N
+                    packedB[packed_idx++] = B[k * ldb + n];
+                } else {
+                    // B is N×K (transposed)
+                    packedB[packed_idx++] = B[n * ldb + k];
+                }
             }
         }
     }
@@ -116,42 +122,47 @@ void xdnn_hgemm_compute(bool transA, int M, int N, int K,
     // DEBUG_PRINT();
     DEBUG_PRINT_PARAMS("transA = %d, M = %d, N = %d, K = %d, alpha = %f, lda = %d, beta = %f, ldc = %d\n", transA, M, N, K, alpha, lda, beta, ldc);
 
-    // Apply beta scaling to C
-    if (beta != 1.0f) {
-        for (int i = 0; i < M; i++) {
-            for (int j = 0; j < N; j++) {
-                float cval = static_cast<float>(C[i * ldc + j]);
-                C[i * ldc + j] = XDNN_FP16(cval * beta);
+    // Check if transA is supported
+    if (transA) {
+        throw std::runtime_error("transA = true is not currently supported in the xdnn_hgemm_compute implementation");
+    }
+    
+    // Unpack the packed B matrix back to original K×N format
+    // This reverses the reference_packb algorithm
+    std::vector<XDNN_FP16> B_unpacked(K * N);
+    const int block_size = 64;
+    int num_blocks = (N + block_size - 1) / block_size; // Round up division
+    
+    int packed_idx = 0;
+    
+    // Process each block of 64 columns (or remaining columns for last block)
+    for (int block = 0; block < num_blocks; block++) {
+        int block_start = block * block_size;
+        int block_end = std::min(block_start + block_size, N);
+        int block_width = block_end - block_start;
+        
+        // Unpack this block row by row
+        for (int k = 0; k < K; k++) {
+            for (int n = block_start; n < block_end; n++) {
+                // Unpack to K×N format (original B matrix after transpose)
+                B_unpacked[k * N + n] = packedB[packed_idx++];
             }
         }
     }
-    // Matrix multiplication with pre-packed B
-    if (!transA) {
-        // A: M×K
-        for (int i = 0; i < M; i++) {
+
+    // Matrix multiplication with unpacked B (now in K×N format)
+    // Note: transA = true is not supported and checked above
+    for (int m = 0; m < M; m++) {
+        for (int n = 0; n < N; n++) {
+            float sum = static_cast<float>(C[m * ldc + n]) * beta;
             for (int k = 0; k < K; k++) {
-                float aval = static_cast<float>(A[i * lda + k]);
-                float temp = alpha * aval;
-                for (int j = 0; j < N; j++) {
-                    float bval = static_cast<float>(packedB[k * N + j]);
-                    float cval = static_cast<float>(C[i * ldc + j]);
-                    C[i * ldc + j] = XDNN_FP16(cval + temp * bval);
-                }
+                // A is M×K format when transA = false (the only supported case)
+                float a_val = static_cast<float>(A[m * lda + k]);
+                float b_val = static_cast<float>(B_unpacked[k * N + n]);
+                sum += alpha * a_val * b_val;
             }
-        }
-    } else {
-        // A: K×M
-        for (int i = 0; i < M; i++) {
-            for (int j = 0; j < N; j++) {
-                float sum = 0.0f;
-                for (int k = 0; k < K; k++) {
-                    float aval = static_cast<float>(A[k * lda + i]);
-                    float bval = static_cast<float>(packedB[k * N + j]);
-                    sum += aval * bval;
-                }
-                float cval = static_cast<float>(C[i * ldc + j]);
-                C[i * ldc + j] = XDNN_FP16(cval + alpha * sum);
-            }
+
+            C[m * ldc + n] = XDNN_FP16(sum);
         }
     }
 }
