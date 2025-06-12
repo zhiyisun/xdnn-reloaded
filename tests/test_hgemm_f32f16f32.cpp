@@ -109,292 +109,17 @@ void reference_packb_f32f16f32(bool transB, int N, int K, const XDNN_FP16* B, in
     }
 }
 
-// Reference implementation for xdnn_hgemm_f32f16f32_compute
-void xdnn_hgemm_f32f16f32_compute_reference(bool transA, int M, int N, int K,
-                                  float alpha, const float* A, int lda, const XDNN_FP16* packedB,
-                                  float beta, float* C, int ldc) {
-    // Check if transA is supported
-    if (transA) {
-        throw std::runtime_error("transA = true is not currently supported in the reference implementation");
-    }
-    
-    // Unpack the packed B matrix back to original K×N format
-    // This reverses the reference_packb_f32f16f32 algorithm
-    std::vector<XDNN_FP16> B_unpacked(K * N);
-    const int block_size = 64;
-    int num_blocks = (N + block_size - 1) / block_size; // Round up division
-    
-    int packed_idx = 0;
-    
-    // Process each block of 64 columns (or remaining columns for last block)
-    for (int block = 0; block < num_blocks; block++) {
-        int block_start = block * block_size;
-        int block_end = std::min(block_start + block_size, N);
-        int block_width = block_end - block_start;
-        
-        // Unpack this block row by row
-        for (int k = 0; k < K; k++) {
-            for (int n = block_start; n < block_end; n++) {
-                // Unpack to K×N format (original B matrix after transpose)
-                B_unpacked[k * N + n] = packedB[packed_idx++];
-            }
-        }
-    }
-    
-    // Print the unpacked B matrix for debugging
-    std::cout << "\n--- Unpacked B Matrix in Reference Implementation ---\n";
-    MatrixDebugUtils::printMatrix(B_unpacked.data(), K, N, N, "B_unpacked (K×N format)", -1, -1);
 
-    // Matrix multiplication with unpacked B (now in K×N format)
-    // Note: transA = true is not supported and checked above
-    for (int m = 0; m < M; m++) {
-        for (int n = 0; n < N; n++) {
-            float sum = C[m * ldc + n] * beta;
-            for (int k = 0; k < K; k++) {
-                // A is M×K format when transA = false (the only supported case)
-                float a_val = A[m * lda + k];  // A is already float
-                float b_val = static_cast<float>(B_unpacked[k * N + n]);
-                sum += alpha * a_val * b_val;
-            }
 
-            C[m * ldc + n] = sum;
-        }
-    }
-}
 
-// Test structure for compute function parameters
-struct HGEMMComputeF32F16F32TestParams {
-    bool transA;
-    int M, N, K;
-    int lda, ldc;
-    float alpha, beta;
-    std::string description;
-    
-    HGEMMComputeF32F16F32TestParams(bool ta, int m, int n, int k, int la, int lc, float a, float b, const std::string& desc)
-        : transA(ta), M(m), N(n), K(k), lda(la), ldc(lc), alpha(a), beta(b), description(desc) {}
-};
 
-// Parameterized test class for xdnn_hgemm_f32f16f32_compute function
-class HGEMMComputeF32F16F32Test : public ::testing::TestWithParam<HGEMMComputeF32F16F32TestParams> {
-protected:
-    void SetUp() override {
-        // Initialize random seed for reproducible tests
-        srand(12345);
-    }
 
-    void TearDown() override {
-        // Cleanup if needed
-    }
-    
-    // Helper function to fill matrix with test data (FP16 version)
-    void fillMatrix(std::vector<XDNN_FP16>& matrix, int size, float start_val = 0.0f) {
-        matrix.resize(size);
-        for (int i = 0; i < size; i++) {
-            // Create varied test data between -1 and 1 that's reasonable for FP16
-            float val = start_val + (static_cast<float>(i % 200) / 100.0f - 1.0f);
-            // Clamp to [-1, 1] range
-            val = std::max(-1.0f, std::min(1.0f, val));
-            matrix[i] = XDNN_FP16(val);
-        }
-    }
-    
-    // Helper function to fill matrix with test data (float version)
-    void fillMatrix(std::vector<float>& matrix, int size, float start_val = 0.0f) {
-        matrix.resize(size);
-        for (int i = 0; i < size; i++) {
-            // Create varied test data between -1 and 1 that's reasonable for float
-            float val = start_val + (static_cast<float>(i % 200) / 100.0f - 1.0f);
-            // Clamp to [-1, 1] range
-            val = std::max(-1.0f, std::min(1.0f, val));
-            matrix[i] = val;
-        }
-    }
-    
-    // Helper function to compare matrices with tolerance
-    bool compareMatrices(const float* expected, const float* actual, int M, int N, int ldc, 
-                        float tolerance = FP32_PRECISION_TOLERANCE) {
-        bool all_match = true;
-        int error_count = 0;
-        const int max_errors_to_show = 10;
-        
-        for (int m = 0; m < M; m++) {
-            for (int n = 0; n < N; n++) {
-                float exp_val = expected[m * ldc + n];
-                float act_val = actual[m * ldc + n];
-                float diff = std::abs(exp_val - act_val);
-                
-                if (diff > tolerance) {
-                    all_match = false;
-                    error_count++;
-                    if (error_count <= max_errors_to_show) {
-                        std::cout << "Matrix mismatch at [" << m << "," << n << "]: expected=" 
-                                  << exp_val << ", actual=" << act_val << ", diff=" << diff << "\n";
-                    }
-                }
-            }
-        }
-        
-        if (error_count > max_errors_to_show) {
-            std::cout << "... and " << (error_count - max_errors_to_show) << " more errors\n";
-        }
-        
-        return all_match;
-    }
-};
 
-// Single parameterized test that covers all HGEMM compute test cases
-TEST_P(HGEMMComputeF32F16F32Test, HGEMMComputeF32F16F32FunctionTest) {
-    const HGEMMComputeF32F16F32TestParams& params = GetParam();
-    
-    // Print test parameters
-    std::cout << "\n=== HGEMMComputeF32F16F32FunctionTest: " << params.description << " ===\n";
-    std::cout << "Parameters: transA=" << params.transA << ", M=" << params.M 
-              << ", N=" << params.N << ", K=" << params.K
-              << ", lda=" << params.lda << ", ldc=" << params.ldc
-              << ", alpha=" << params.alpha << ", beta=" << params.beta << "\n";
-    
-    // Allocate matrices
-    std::vector<float> A;  // A is float for F32F16F32
-    std::vector<XDNN_FP16> B, packedB;
-    std::vector<float> C_actual, C_expected;
-    
-    // Fill matrices with test data
-    fillMatrix(A, params.M * params.lda, 0.1f);
-    fillMatrix(B, params.K * params.N, 0.2f);  // Use different start value for B
-    fillMatrix(C_actual, params.M * params.ldc, 0.3f);  // Use different start value for C
-    
-    // Copy C for reference computation
-    C_expected = C_actual;
-    
-    // Pack B matrix (assuming B is not transposed for simplicity)
-    packedB.resize(params.K * params.N);
-    xdnn_hgemm_f32f16f32_packb(false, params.N, params.K, B.data(), params.N, packedB.data());
-    
-    // Print input matrices (limited output for large matrices)
-    std::cout << "\n--- Input Matrices ---\n";
-    MatrixDebugUtils::printMatrix(A.data(), params.M, params.lda, params.lda, "Matrix A", 5, 10);
-    MatrixDebugUtils::printMatrix(B.data(), params.K, params.N, params.N, "Matrix B (K×N format)", 5, 10);
-    MatrixDebugUtils::printMatrix(packedB.data(), params.K, params.N, params.N, "PackedB (K×N format)", 5, 10);
-    MatrixDebugUtils::printMatrix(C_actual.data(), params.M, params.ldc, params.ldc, "Initial Matrix C", 5, 10);
-    
-    // Run reference implementation
-    xdnn_hgemm_f32f16f32_compute_reference(params.transA, params.M, params.N, params.K,
-                                 params.alpha, A.data(), params.lda, packedB.data(),
-                                 params.beta, C_expected.data(), params.ldc);
-    
-    // Run actual implementation
-    xdnn_hgemm_f32f16f32_compute(params.transA, params.M, params.N, params.K,
-                       params.alpha, A.data(), params.lda, packedB.data(),
-                       params.beta, C_actual.data(), params.ldc);
-    
-    // Print output matrices (limited output for large matrices)
-    std::cout << "\n--- Output Matrices ---\n";
-    MatrixDebugUtils::printMatrix(C_expected.data(), params.M, params.ldc, params.ldc, "C Expected (Reference)", 5, 10);
-    MatrixDebugUtils::printMatrix(C_actual.data(), params.M, params.ldc, params.ldc, "C Actual (Implementation)", 5, 10);
-    
-    // Print matrix statistics
-    MatrixDebugUtils::printMatrixStats(A.data(), params.M * params.lda, "Matrix A");
-    MatrixDebugUtils::printMatrixStats(B.data(), params.K * params.N, "Matrix B");
-    MatrixDebugUtils::printMatrixStats(packedB.data(), params.K * params.N, "PackedB");
-    MatrixDebugUtils::printMatrixStats(C_expected.data(), params.M * params.ldc, "C Expected");
-    MatrixDebugUtils::printMatrixStats(C_actual.data(), params.M * params.ldc, "C Actual");
-    
-    // Compare results
-    EXPECT_TRUE(compareMatrices(C_expected.data(), C_actual.data(), params.M, params.N, params.ldc, 0.2))
-        << "Matrix computation mismatch for " << params.description
-        << ": transA=" << params.transA << ", M=" << params.M << ", N=" << params.N << ", K=" << params.K
-        << ", alpha=" << params.alpha << ", beta=" << params.beta
-        << ", lda=" << params.lda << ", ldc=" << params.ldc;
-    
-    std::cout << "=== End of " << params.description << " ===\n\n";
-}
 
-// Instantiate the parameterized test with the required test cases and additional comprehensive cases
-INSTANTIATE_TEST_SUITE_P(
-    HGEMMComputeF32F16F32FunctionTests,
-    HGEMMComputeF32F16F32Test,
-    ::testing::Values(
-        // Required test cases from the user
-        HGEMMComputeF32F16F32TestParams(false, 20, 4096, 1024, 1024, 4096, 1.0f, 0.0f, "required_case_M20_N4096_K1024"),
-        HGEMMComputeF32F16F32TestParams(false, 20, 6144, 1024, 1024, 6144, 1.0f, 0.0f, "required_case_M20_N6144_K1024"),
-        HGEMMComputeF32F16F32TestParams(false, 1, 4096, 1024, 1024, 4096, 1.0f, 0.0f, "required_case_M1_N4096_K1024"),
-        HGEMMComputeF32F16F32TestParams(false, 1, 6144, 1024, 1024, 6144, 1.0f, 0.0f, "required_case_M1_N6144_K1024"),
-        
-        // Additional test cases for comprehensive coverage
-        
-        // Basic small test cases
-        HGEMMComputeF32F16F32TestParams(false, 16, 16, 16, 16, 16, 1.0f, 0.0f, "basic_small_16x16x16_beta0"),
-        HGEMMComputeF32F16F32TestParams(false, 32, 32, 32, 32, 32, 1.0f, 1.0f, "basic_small_32x32x32_beta1"),
 
-        // Different matrix shapes
-        HGEMMComputeF32F16F32TestParams(false, 128, 256, 64, 64, 256, 1.0f, 0.0f, "rectangular_128x256x64"),
-        HGEMMComputeF32F16F32TestParams(false, 256, 128, 64, 64, 128, 1.0f, 0.0f, "rectangular_256x128x64"),
-        HGEMMComputeF32F16F32TestParams(false, 64, 128, 256, 256, 128, 1.0f, 0.0f, "rectangular_64x128x256"),
-        
-        // Edge cases with small dimensions
-        HGEMMComputeF32F16F32TestParams(false, 1, 1, 1, 1, 1, 1.0f, 1.0f, "edge_case_1x1x1"),
-        HGEMMComputeF32F16F32TestParams(false, 1, 1024, 512, 512, 1024, 1.0f, 1.0f, "edge_case_1x1024x512"),
-        HGEMMComputeF32F16F32TestParams(false, 1024, 1, 512, 512, 1, 1.0f, 1.0f, "edge_case_1024x1x512"),
-        HGEMMComputeF32F16F32TestParams(false, 512, 512, 1, 1, 512, 1.0f, 1.0f, "edge_case_512x512x1"),
-        
-        // Stride variations (non-minimal strides)
-        HGEMMComputeF32F16F32TestParams(false, 64, 64, 64, 128, 128, 1.0f, 1.0f, "stride_variation_64x64x64"),
-        HGEMMComputeF32F16F32TestParams(false, 32, 32, 32, 64, 64, 1.0f, 1.0f, "stride_variation_32x32x32"),
-        
-        // Medium-sized matrices
-        HGEMMComputeF32F16F32TestParams(false, 512, 512, 512, 512, 512, 1.0f, 1.0f, "medium_512x512x512"),
-        HGEMMComputeF32F16F32TestParams(false, 256, 1024, 256, 256, 1024, 1.0f, 1.0f, "medium_256x1024x256"),
-        HGEMMComputeF32F16F32TestParams(false, 1024, 256, 256, 256, 256, 1.0f, 1.0f, "medium_1024x256x256"),
-        
-        // Test cases similar to the required ones but with variations
-        HGEMMComputeF32F16F32TestParams(false, 10, 4096, 1024, 1024, 4096, 1.0f, 1.0f, "variation_M10_N4096_K1024"),
-        HGEMMComputeF32F16F32TestParams(false, 20, 2048, 1024, 1024, 2048, 1.0f, 1.0f, "variation_M20_N2048_K1024"),
-        HGEMMComputeF32F16F32TestParams(false, 20, 4096, 512, 512, 4096, 1.0f, 1.0f, "variation_M20_N4096_K512"),
-        
-        // Additional specific test case requested by user
-        HGEMMComputeF32F16F32TestParams(false, 1, 151936, 1024, 1024, 151936, 1.0f, 0.0f, "user_requested_M1_N151936_K1024")
-    )
-);
 
-// Additional specific test for edge cases and error conditions
-class HGEMMComputeF32F16F32EdgeCaseTest : public ::testing::Test {
-protected:
-    void SetUp() override {
-        srand(12345);
-    }
-};
 
-TEST_F(HGEMMComputeF32F16F32EdgeCaseTest, ZeroBetaTest) {
-    // Test behavior when beta = 0 (original C should be ignored)
-    const int M = 16, N = 16, K = 16;
-    std::vector<float> A(M * K, 1.0f);  // A is float
-    std::vector<XDNN_FP16> packedB(K * N, XDNN_FP16(2.0f));
-    std::vector<float> C(M * N, 999.0f); // Large value that should be ignored
-    
-    xdnn_hgemm_f32f16f32_compute(false, M, N, K, 1.0f, A.data(), K, packedB.data(), 0.0f, C.data(), N);
-    
-    // Expected result: alpha * (A * B) = 1.0 * (1.0 * 2.0 * K) = 32.0
-    float expected = 32.0f;
-    for (int i = 0; i < M * N; i++) {
-        float actual = C[i];
-        EXPECT_NEAR(expected, actual, FP32_PRECISION_TOLERANCE)
-            << "Zero beta test failed at index " << i;
-    }
-}
 
-TEST_F(HGEMMComputeF32F16F32EdgeCaseTest, TransANotSupportedTest) {
-    // Test that transA = true throws an error in the reference implementation
-    const int M = 16, N = 16, K = 16;
-    std::vector<float> A(K * M, 1.0f); // K×M for transA = true
-    std::vector<XDNN_FP16> packedB(K * N, XDNN_FP16(2.0f));
-    std::vector<float> C(M * N, 0.0f);
-    
-    // Expect the reference implementation to throw an error when transA = true
-    EXPECT_THROW(
-        xdnn_hgemm_f32f16f32_compute_reference(true, M, N, K, 1.0f, A.data(), M, packedB.data(), 0.0f, C.data(), N),
-        std::runtime_error
-    );
-}
 
 // Test structure for packb function parameters
 struct HGEMMPackBF32F16F32TestParams {
@@ -562,8 +287,14 @@ INSTANTIATE_TEST_SUITE_P(
     )
 );
 
-// Additional specific tests for edge cases and consistency
-TEST_F(HGEMMComputeF32F16F32EdgeCaseTest, PackBConsistencyTest) {
+// Additional specific test for pack function edge cases and consistency
+class HGEMMPackBF32F16F32EdgeCaseTest : public ::testing::Test {
+protected:
+    void SetUp() override {
+        srand(12345);
+    }
+};
+TEST_F(HGEMMPackBF32F16F32EdgeCaseTest, PackBConsistencyTest) {
     // Test that packing and unpacking gives consistent results with matrix multiplication
     const int N = 32, K = 32;
     std::vector<XDNN_FP16> B_original(K * N);
@@ -597,7 +328,7 @@ TEST_F(HGEMMComputeF32F16F32EdgeCaseTest, PackBConsistencyTest) {
     }
 }
 
-TEST_F(HGEMMComputeF32F16F32EdgeCaseTest, PackBStrideBehaviorTest) {
+TEST_F(HGEMMPackBF32F16F32EdgeCaseTest, PackBStrideBehaviorTest) {
     // Test behavior with different stride values
     const int N = 16, K = 16;
     const int stride_normal = N;
