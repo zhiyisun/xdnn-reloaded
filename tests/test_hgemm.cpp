@@ -591,3 +591,255 @@ TEST_F(HGEMMComputeEdgeCaseTest, PackBStrideBehaviorTest) {
             << ": normal_stride=" << val_normal << ", large_stride=" << val_strided;
     }
 }
+
+// Test structure for compute_biasadd function parameters
+struct HGEMMComputeBiasAddTestParams {
+    bool transA;
+    int M, N, K;
+    int lda, ldc;
+    float alpha, beta;
+    std::string description;
+    
+    HGEMMComputeBiasAddTestParams(bool ta, int m, int n, int k, int la, int lc, float a, float b, const std::string& desc)
+        : transA(ta), M(m), N(n), K(k), lda(la), ldc(lc), alpha(a), beta(b), description(desc) {}
+};
+
+// Reference implementation for xdnn_hgemm_compute_biasadd
+void xdnn_hgemm_compute_biasadd_reference(bool transA, int M, int N, int K,
+                                         float alpha, const XDNN_FP16* A, int lda, const XDNN_FP16* packedB,
+                                         float beta, XDNN_FP16* C, int ldc, const float* bias) {
+    // First perform the matrix multiplication (same as the compute reference)
+    xdnn_hgemm_compute_reference(transA, M, N, K, alpha, A, lda, packedB, beta, C, ldc);
+    
+    // Then add bias to each row
+    for (int m = 0; m < M; m++) {
+        for (int n = 0; n < N; n++) {
+            float current_val = static_cast<float>(C[m * ldc + n]);
+            C[m * ldc + n] = XDNN_FP16(current_val + bias[n]);
+        }
+    }
+}
+
+// Parameterized test class for xdnn_hgemm_compute_biasadd function
+class HGEMMComputeBiasAddTest : public ::testing::TestWithParam<HGEMMComputeBiasAddTestParams> {
+protected:
+    void SetUp() override {
+        // Initialize random seed for reproducible tests
+        srand(12345);
+    }
+
+    void TearDown() override {
+        // Cleanup if needed
+    }
+    
+    // Helper function to fill matrix with test data
+    void fillMatrix(std::vector<XDNN_FP16>& matrix, int size, float start_val = 0.0f) {
+        matrix.resize(size);
+        for (int i = 0; i < size; i++) {
+            // Create varied test data between -1 and 1 that's reasonable for FP16
+            float val = start_val + (static_cast<float>(i % 200) / 100.0f - 1.0f);
+            // Clamp to [-1, 1] range
+            val = std::max(-1.0f, std::min(1.0f, val));
+            matrix[i] = XDNN_FP16(val);
+        }
+    }
+    
+    // Helper function to fill bias vector with test data
+    void fillBias(std::vector<float>& bias, int size, float start_val = 0.5f) {
+        bias.resize(size);
+        for (int i = 0; i < size; i++) {
+            // Create varied bias data between -0.5 and 0.5
+            float val = start_val + (static_cast<float>(i % 100) / 200.0f - 0.25f);
+            bias[i] = val;
+        }
+    }
+    
+    // Helper function to compare matrices with tolerance
+    bool compareMatrices(const XDNN_FP16* expected, const XDNN_FP16* actual, int M, int N, int ldc, 
+                        float tolerance = FP16_PRECISION_TOLERANCE) {
+        bool all_match = true;
+        int error_count = 0;
+        const int max_errors_to_show = 10;
+        
+        for (int m = 0; m < M; m++) {
+            for (int n = 0; n < N; n++) {
+                float exp_val = static_cast<float>(expected[m * ldc + n]);
+                float act_val = static_cast<float>(actual[m * ldc + n]);
+                float diff = std::abs(exp_val - act_val);
+                
+                if (diff > tolerance) {
+                    all_match = false;
+                    error_count++;
+                    if (error_count <= max_errors_to_show) {
+                        std::cout << "Mismatch at [" << m << "," << n << "]: expected=" 
+                                  << exp_val << ", actual=" << act_val << ", diff=" << diff << "\n";
+                    }
+                }
+            }
+        }
+        
+        if (error_count > max_errors_to_show) {
+            std::cout << "... and " << (error_count - max_errors_to_show) << " more errors\n";
+        }
+        
+        return all_match;
+    }
+};
+
+// Single parameterized test that covers all HGEMM compute_biasadd test cases
+TEST_P(HGEMMComputeBiasAddTest, HGEMMComputeBiasAddFunctionTest) {
+    const HGEMMComputeBiasAddTestParams& params = GetParam();
+    
+    // Print test parameters
+    std::cout << "\n=== HGEMMComputeBiasAddFunctionTest: " << params.description << " ===\n";
+    std::cout << "Parameters: transA=" << params.transA << ", M=" << params.M 
+              << ", N=" << params.N << ", K=" << params.K
+              << ", lda=" << params.lda << ", ldc=" << params.ldc
+              << ", alpha=" << params.alpha << ", beta=" << params.beta << "\n";
+    
+    // Allocate matrices
+    std::vector<XDNN_FP16> A, B, C_actual, C_expected, packedB;
+    std::vector<float> bias;
+    
+    // Fill matrices with test data
+    fillMatrix(A, params.M * params.lda, 0.1f);
+    fillMatrix(B, params.K * params.N, 0.2f);  // Use different start value for B
+    fillMatrix(C_actual, params.M * params.ldc, 0.3f);  // Use different start value for C
+    fillBias(bias, params.N, 0.5f);  // Fill bias vector
+    
+    // Copy C for reference computation
+    C_expected = C_actual;
+    
+    // Pack B matrix (assuming B is not transposed for simplicity)
+    packedB.resize(params.K * params.N);
+    xdnn_hgemm_packb(false, params.N, params.K, B.data(), params.N, packedB.data());
+    
+    // Print input matrices and bias (limited output for readability)
+    std::cout << "\n--- Input Matrices and Bias ---\n";
+    MatrixDebugUtils::printMatrix(A.data(), params.M, params.lda, params.lda, "Matrix A", 5, 10);
+    MatrixDebugUtils::printMatrix(B.data(), params.K, params.N, params.N, "Matrix B (K×N format)", 5, 10);
+    MatrixDebugUtils::printMatrix(packedB.data(), params.K, params.N, params.N, "PackedB (K×N format)", 5, 10);
+    MatrixDebugUtils::printMatrix(C_actual.data(), params.M, params.ldc, params.ldc, "Initial Matrix C", 5, 10);
+    
+    // Print bias vector
+    std::cout << "Bias vector: ";
+    for (int i = 0; i < std::min(params.N, 10); i++) {
+        std::cout << std::fixed << std::setprecision(3) << bias[i] << " ";
+    }
+    if (params.N > 10) std::cout << "...";
+    std::cout << "\n\n";
+    
+    // Run reference implementation
+    xdnn_hgemm_compute_biasadd_reference(params.transA, params.M, params.N, params.K,
+                                        params.alpha, A.data(), params.lda, packedB.data(),
+                                        params.beta, C_expected.data(), params.ldc, bias.data());
+    
+    // Run actual implementation
+    xdnn_hgemm_compute_biasadd(params.transA, params.M, params.N, params.K,
+                              params.alpha, A.data(), params.lda, packedB.data(),
+                              params.beta, C_actual.data(), params.ldc, bias.data());
+    
+    // Print output matrices (limited output for readability)
+    std::cout << "\n--- Output Matrices ---\n";
+    MatrixDebugUtils::printMatrix(C_expected.data(), params.M, params.ldc, params.ldc, "C Expected (Reference)", 5, 10);
+    MatrixDebugUtils::printMatrix(C_actual.data(), params.M, params.ldc, params.ldc, "C Actual (Implementation)", 5, 10);
+    
+    // Print matrix statistics
+    MatrixDebugUtils::printMatrixStats(A.data(), params.M * params.lda, "Matrix A");
+    MatrixDebugUtils::printMatrixStats(B.data(), params.K * params.N, "Matrix B");
+    MatrixDebugUtils::printMatrixStats(packedB.data(), params.K * params.N, "PackedB");
+    MatrixDebugUtils::printMatrixStats(C_expected.data(), params.M * params.ldc, "C Expected");
+    MatrixDebugUtils::printMatrixStats(C_actual.data(), params.M * params.ldc, "C Actual");
+    
+    // Compare results
+    EXPECT_TRUE(compareMatrices(C_expected.data(), C_actual.data(), params.M, params.N, params.ldc, 0.2))
+        << "Matrix computation with bias addition mismatch for " << params.description
+        << ": transA=" << params.transA << ", M=" << params.M << ", N=" << params.N << ", K=" << params.K
+        << ", alpha=" << params.alpha << ", beta=" << params.beta
+        << ", lda=" << params.lda << ", ldc=" << params.ldc;
+    
+    std::cout << "=== End of " << params.description << " ===\n\n";
+}
+
+// Instantiate the parameterized test with comprehensive test cases for compute_biasadd
+INSTANTIATE_TEST_SUITE_P(
+    HGEMMComputeBiasAddFunctionTests,
+    HGEMMComputeBiasAddTest,
+    ::testing::Values(
+        // Basic test cases
+        HGEMMComputeBiasAddTestParams(false, 16, 16, 16, 16, 16, 1.0f, 0.0f, "basic_small_16x16x16_biasadd"),
+        HGEMMComputeBiasAddTestParams(false, 32, 32, 32, 32, 32, 1.0f, 1.0f, "basic_small_32x32x32_biasadd"),
+        
+        // Test cases similar to compute tests but with bias addition
+        HGEMMComputeBiasAddTestParams(false, 20, 4096, 1024, 1024, 4096, 1.0f, 0.0f, "biasadd_case_M20_N4096_K1024"),
+        HGEMMComputeBiasAddTestParams(false, 20, 6144, 1024, 1024, 6144, 1.0f, 0.0f, "biasadd_case_M20_N6144_K1024"),
+        HGEMMComputeBiasAddTestParams(false, 1, 4096, 1024, 1024, 4096, 1.0f, 0.0f, "biasadd_case_M1_N4096_K1024"),
+        HGEMMComputeBiasAddTestParams(false, 1, 6144, 1024, 1024, 6144, 1.0f, 0.0f, "biasadd_case_M1_N6144_K1024"),
+        
+        // Different matrix shapes with bias
+        HGEMMComputeBiasAddTestParams(false, 128, 256, 64, 64, 256, 1.0f, 0.0f, "rectangular_128x256x64_biasadd"),
+        HGEMMComputeBiasAddTestParams(false, 256, 128, 64, 64, 128, 1.0f, 0.0f, "rectangular_256x128x64_biasadd"),
+        HGEMMComputeBiasAddTestParams(false, 64, 128, 256, 256, 128, 1.0f, 0.0f, "rectangular_64x128x256_biasadd"),
+        
+        // Edge cases with small dimensions
+        HGEMMComputeBiasAddTestParams(false, 1, 1, 1, 1, 1, 1.0f, 1.0f, "edge_case_1x1x1_biasadd"),
+        HGEMMComputeBiasAddTestParams(false, 1, 1024, 512, 512, 1024, 1.0f, 1.0f, "edge_case_1x1024x512_biasadd"),
+        
+        // Medium-sized matrices with bias
+        HGEMMComputeBiasAddTestParams(false, 256, 512, 256, 256, 512, 1.0f, 1.0f, "medium_256x512x256_biasadd"),
+        HGEMMComputeBiasAddTestParams(false, 512, 256, 256, 256, 256, 1.0f, 1.0f, "medium_512x256x256_biasadd")
+    )
+);
+
+// Additional specific tests for bias addition edge cases
+TEST_F(HGEMMComputeEdgeCaseTest, BiasAddZeroBiasTest) {
+    // Test behavior when bias is all zeros (should be same as regular compute)
+    const int M = 16, N = 16, K = 16;
+    std::vector<XDNN_FP16> A(M * K, XDNN_FP16(1.0f));
+    std::vector<XDNN_FP16> packedB(K * N, XDNN_FP16(2.0f));
+    std::vector<XDNN_FP16> C_biasadd(M * N, XDNN_FP16(0.5f));
+    std::vector<XDNN_FP16> C_regular(M * N, XDNN_FP16(0.5f));
+    std::vector<float> zero_bias(N, 0.0f);
+    
+    // Run both computations
+    xdnn_hgemm_compute(false, M, N, K, 1.0f, A.data(), K, packedB.data(), 1.0f, C_regular.data(), N);
+    xdnn_hgemm_compute_biasadd(false, M, N, K, 1.0f, A.data(), K, packedB.data(), 1.0f, C_biasadd.data(), N, zero_bias.data());
+    
+    // Results should be identical
+    for (int i = 0; i < M * N; i++) {
+        float val_regular = static_cast<float>(C_regular[i]);
+        float val_biasadd = static_cast<float>(C_biasadd[i]);
+        EXPECT_NEAR(val_regular, val_biasadd, FP16_PRECISION_TOLERANCE)
+            << "Zero bias test failed at index " << i 
+            << ": regular=" << val_regular << ", biasadd=" << val_biasadd;
+    }
+}
+
+TEST_F(HGEMMComputeEdgeCaseTest, BiasAddLargeBiasTest) {
+    // Test behavior with larger bias values
+    const int M = 8, N = 8, K = 8;
+    std::vector<XDNN_FP16> A(M * K, XDNN_FP16(0.1f));
+    std::vector<XDNN_FP16> packedB(K * N, XDNN_FP16(0.1f));
+    std::vector<XDNN_FP16> C(M * N, XDNN_FP16(0.0f));
+    std::vector<float> large_bias(N);
+    
+    // Fill bias with larger values
+    for (int i = 0; i < N; i++) {
+        large_bias[i] = static_cast<float>(i) * 2.0f;
+    }
+    
+    xdnn_hgemm_compute_biasadd(false, M, N, K, 1.0f, A.data(), K, packedB.data(), 0.0f, C.data(), N, large_bias.data());
+    
+    // Verify that bias was properly added to each row
+    for (int m = 0; m < M; m++) {
+        for (int n = 0; n < N; n++) {
+            float result = static_cast<float>(C[m * N + n]);
+            // Expected: matrix_result + bias[n], where matrix_result = alpha * sum(A * B) = 1.0 * (0.1 * 0.1 * K) = 0.08
+            float expected_matrix_part = 0.08f;  // 0.1 * 0.1 * 8
+            float expected_total = expected_matrix_part + large_bias[n];
+            EXPECT_NEAR(expected_total, result, 0.1f)  // Use larger tolerance for this test
+                << "Large bias test failed at [" << m << "," << n << "]: expected=" 
+                << expected_total << ", actual=" << result;
+        }
+    }
+}

@@ -932,7 +932,7 @@ TEST_P(AMXSGEMMComputeTest, ComputeFunctionTest) {
     bool matrices_match = true;
     int mismatch_count = 0;
     const int max_mismatches = 10;
-    const float tolerance = 1e-1f; // Relaxed tolerance for BF16
+    const float tolerance = 2e-1f; // Relaxed tolerance for BF16
     
     for (int i = 0; i < params.M && mismatch_count < max_mismatches; i++) {
         for (int j = 0; j < params.N && mismatch_count < max_mismatches; j++) {

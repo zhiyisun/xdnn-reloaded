@@ -29,7 +29,6 @@ set(XDNN_SOURCES
     hgemm_f32u4f32.cpp
     hgemm.cpp
     intrinsic_ext.cpp
-    platform_detection.cpp
     sgemm_bf16bf16f32.cpp
     sgemm_f32bf16bf16.cpp
     sgemm_f32f16bf16.cpp
