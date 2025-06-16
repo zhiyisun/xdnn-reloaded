@@ -48,7 +48,7 @@ void xdnn_hgemm_compute(bool transA, int M, int N, int K,
                         float alpha, const XDNN_FP16 *A, int lda, const XDNN_FP16 *packedB,
                         float beta, XDNN_FP16 *C, int ldc) {
     DEBUG_PRINT();
-    // DEBUG_PRINT_PARAMS("transA = %d, M = %d, N = %d, K = %d, alpha = %f, lda = %d, beta = %f, ldc = %d\n", transA, M, N, K, alpha, lda, beta, ldc);
+    DEBUG_PRINT_PARAMS("transA = %d, M = %d, N = %d, K = %d, alpha = %f, lda = %d, beta = %f, ldc = %d\n", transA, M, N, K, alpha, lda, beta, ldc);
 
     // Check if transA is supported
     if (transA) {
@@ -114,7 +114,7 @@ void xdnn_hgemm_compute_biasadd(bool transA, int M, int N, int K,
                                float alpha, const XDNN_FP16 *A, int lda, const XDNN_FP16 *packedB,
                                float beta, XDNN_FP16 *C, int ldc, const float *bias) {
     DEBUG_PRINT();
-    // DEBUG_PRINT_PARAMS("transA = %d, M = %d, N = %d, K = %d, alpha = %f, lda = %d, beta = %f, ldc = %d\n", transA, M, N, K, alpha, lda, beta, ldc);
+    DEBUG_PRINT_PARAMS("transA = %d, M = %d, N = %d, K = %d, alpha = %f, lda = %d, beta = %f, ldc = %d\n", transA, M, N, K, alpha, lda, beta, ldc);
     // Compute regular hgemm
     xdnn_hgemm_compute(transA, M, N, K, alpha, A, lda, packedB, beta, C, ldc);
     

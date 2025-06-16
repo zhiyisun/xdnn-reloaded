@@ -9,7 +9,7 @@
 // To pack matrix B (row-major KxN output)
 void xdnn_hgemm_f32f16f32_packb(bool transB, int N, int K, const XDNN_FP16* B, int ldb, XDNN_FP16* packedB) {
     DEBUG_PRINT();
-    // DEBUG_PRINT_PARAMS("transB = %d, N = %d, K = %d, ldb = %d\n", transB, N, K, ldb);
+    DEBUG_PRINT_PARAMS("transB = %d, N = %d, K = %d, ldb = %d\n", transB, N, K, ldb);
 
     const int block_size = 64;
     int num_blocks = (N + block_size - 1) / block_size; // Round up division
