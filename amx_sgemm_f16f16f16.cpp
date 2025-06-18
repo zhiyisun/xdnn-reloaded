@@ -10,6 +10,7 @@
 
 int xdnn_small_amx_sgemm_f16f16f16_packb_size(int N, int K, int block_rows, int block_cols) {
     DEBUG_PRINT();
+    return 0;
 }
 
 void xdnn_small_amx_sgemm_f16f16f16_packb(bool transB, int N, int K, const XDNN_FP16 *B, int stride, XDNN_FP16 *packedB,
