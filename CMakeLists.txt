@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.10)
 project(xdnn VERSION 1.0.0 LANGUAGES CXX)
 
+find_package(OpenMP REQUIRED)
+
 # Option to build the library (default: ON)
 option(BUILD_XDNN_LIBRARY "Build the XDNN library" ON)
 
@@ -10,7 +12,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 # Add compiler flags for optimization and architecture-specific features
-add_compile_options(-mavx2 -mfma)
+add_compile_options(-mavx512f -mfma -fopenmp)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     add_compile_options(-march=native -O3)
 endif()
@@ -59,6 +61,13 @@ if(BUILD_XDNN_LIBRARY)
         OUTPUT_NAME xdnn
         LIBRARY_OUTPUT_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     )
+
+    target_link_libraries(xdnn_static PUBLIC OpenMP::OpenMP_CXX)
+    target_link_libraries(xdnn PUBLIC OpenMP::OpenMP_CXX)
+
+    # Add the test executable (commented out - test file doesn't exist)
+    # add_executable(test_amx_sgemm_bf16bf16bf16 test_amx_sgemm_bf16bf16bf16.cpp)
+    # target_link_libraries(test_amx_sgemm_bf16bf16bf16 PRIVATE xdnn_static)
 
     # Install targets
     install(TARGETS xdnn xdnn_static
